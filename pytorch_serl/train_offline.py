@@ -8,7 +8,7 @@ from tqdm import tqdm
 import numpy as np
 from collections import defaultdict
 
-from agents.sac import SACAgent, SACHybridAgent
+from agents.sac import SACHybridAgent
 from data.replay_buffer import ReplayBuffer
 from utils.device import DEVICE, to_device
 
@@ -87,23 +87,15 @@ def train_offline(
     print(f"动作维度: {action_dim}")
 
     # 创建智能体
-    if "learned-gripper" in setup_mode:
-        # 混合策略：连续动作 + 抓取动作
-        continuous_action_dim = action_dim - 1  # 最后一维是抓取动作
-        agent = SACHybridAgent(
-            image_keys=image_keys,
-            continuous_action_dim=continuous_action_dim,
-            grasp_action_dim=3,
-            lr=lr,
-            device=device,
-        )
-        print(f"创建混合SAC智能体 (连续动作维度: {continuous_action_dim})")
-    else:
-        # 标准SAC智能体
-        agent = SACAgent(
-            image_keys=image_keys, action_dim=action_dim, lr=lr, device=device
-        )
-        print(f"创建标准SAC智能体 (动作维度: {action_dim})")
+    continuous_action_dim = action_dim - 1  # 最后一维是抓取动作
+    agent = SACHybridAgent(
+        image_keys=image_keys,
+        continuous_action_dim=continuous_action_dim,
+        grasp_action_dim=3,
+        lr=lr,
+        device=device,
+    )
+    print(f"创建混合SAC智能体 (连续动作维度: {continuous_action_dim})")
 
     # 训练循环
     print("开始离线训练...")

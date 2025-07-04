@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional
 from collections import defaultdict, deque
 from tqdm import tqdm
 
-from agents.sac import SACAgent, SACHybridAgent
+from agents.sac import SACHybridAgent
 from data.replay_buffer import ReplayBuffer
 from utils.device import DEVICE, to_device
 
@@ -377,24 +377,17 @@ def train_hybrid(
     print(f"动作维度: {action_dim}")
 
     # 创建智能体
-    if "learned-gripper" in setup_mode:
-        continuous_action_dim = action_dim - (2 if "dual-arm" in setup_mode else 1)
-        agent = SACHybridAgent(
-            image_keys=image_keys,
-            continuous_action_dim=continuous_action_dim,
-            grasp_action_dim=3,
-            lr=lr,
-            device=device,
-        )
-        # 添加属性用于演员循环
-        setattr(agent, "action_dim", action_dim)
-        print(f"创建混合SAC智能体 (连续动作维度: {continuous_action_dim})")
-    else:
-        agent = SACAgent(
-            image_keys=image_keys, action_dim=action_dim, lr=lr, device=device
-        )
-        setattr(agent, "action_dim", action_dim)
-        print(f"创建标准SAC智能体 (动作维度: {action_dim})")
+    continuous_action_dim = action_dim - (2 if "dual-arm" in setup_mode else 1)
+    agent = SACHybridAgent(
+        image_keys=image_keys,
+        continuous_action_dim=continuous_action_dim,
+        grasp_action_dim=3,
+        lr=lr,
+        device=device,
+    )
+    # 添加属性用于演员循环
+    setattr(agent, "action_dim", action_dim)
+    print(f"创建混合SAC智能体 (连续动作维度: {continuous_action_dim})")
 
     # 创建模拟环境
     env = MockEnvironment(image_keys, action_dim)

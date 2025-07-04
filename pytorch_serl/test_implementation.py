@@ -11,7 +11,7 @@ from utils.device import DEVICE
 from networks.resnet import ResNetEncoder
 from networks.actor_critic import Actor, Critic, GraspCritic
 from networks.classifier import RewardClassifier
-from agents.sac import SACAgent, SACHybridAgent
+from agents.sac import SACHybridAgent
 from data.replay_buffer import ReplayBuffer
 
 
@@ -82,16 +82,8 @@ def test_agents():
     image_keys = ["image"]
     batch_size = 4
 
-    # 测试标准SAC智能体
-    print("测试标准SAC智能体...")
-    agent = SACAgent(image_keys=image_keys, action_dim=6, device=DEVICE)
-
     # 创建测试观测
     test_obs = {"image": torch.randn(batch_size, 3, 128, 128).to(DEVICE)}
-
-    # 测试动作采样
-    actions = agent.sample_actions(test_obs, deterministic=False)
-    print(f"采样动作形状: {actions.shape}")
 
     # 测试混合SAC智能体
     print("测试混合SAC智能体...")
