@@ -102,11 +102,21 @@ class ReplayBuffer:
             if values:
                 if key in self.image_keys:
                     # 图像数据，确保是CHW格式
-                    values = np.array(values)
-                    if len(values.shape) == 4 and values.shape[-1] == 3:  # BHWC -> BCHW
-                        values = values.transpose(0, 3, 1, 2)
+                    processed_values = []
+                    for value in values:
+                        if len(value.shape) == 3:
+                            if value.shape[-1] == 3:  # HWC -> CHW
+                                value = value.transpose(2, 0, 1)
+                            elif value.shape[0] == 3:  # Already CHW
+                                pass
+                            else:
+                                raise ValueError(
+                                    f"Unexpected image shape: {value.shape}"
+                                )
+                        processed_values.append(value)
+
                     batch_obs[key] = torch.tensor(
-                        values, dtype=torch.float32, device=device
+                        np.array(processed_values), dtype=torch.float32, device=device
                     )
                 else:
                     # 其他数据

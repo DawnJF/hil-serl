@@ -136,6 +136,28 @@ class SACHybridAgent:
             "alpha": self.alpha.item(),
         }
 
+    def update_critics_only(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+        """只更新Critic网络（用于UTD/CTA比率训练）"""
+        batch = to_device(batch, self.device)
+
+        # 分离连续动作和抓取动作
+        continuous_actions = batch["actions"][..., :-1]
+        grasp_actions = batch["actions"][..., -1:]
+
+        # 更新连续动作的Critic
+        critic_loss = self._update_critic(batch, continuous_actions)
+
+        # 更新抓取Critic
+        grasp_critic_loss = self._update_grasp_critic(batch, grasp_actions)
+
+        # 软更新目标网络
+        self._soft_update_target()
+
+        return {
+            "critic_loss": critic_loss,
+            "grasp_critic_loss": grasp_critic_loss,
+        }
+
     def _update_critic(
         self, batch: Dict[str, torch.Tensor], continuous_actions: torch.Tensor
     ) -> float:

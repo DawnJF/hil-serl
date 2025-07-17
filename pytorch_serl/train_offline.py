@@ -45,7 +45,6 @@ def load_demo_data(demo_paths, replay_buffer):
 def train_offline(
     demo_paths,
     image_keys,
-    setup_mode="single-arm-fixed-gripper",
     batch_size=256,
     max_steps=50000,
     lr=3e-4,
@@ -58,7 +57,6 @@ def train_offline(
     Args:
         demo_paths: 演示数据路径列表
         image_keys: 图像键列表
-        setup_mode: 设置模式
         batch_size: 批次大小
         max_steps: 最大训练步数
         lr: 学习率
@@ -67,7 +65,6 @@ def train_offline(
         log_interval: 日志间隔
     """
     print(f"使用设备: {device}")
-    print(f"设置模式: {setup_mode}")
 
     # 创建重放缓冲区
     replay_buffer = ReplayBuffer(capacity=200000, image_keys=image_keys)
@@ -143,18 +140,6 @@ def main():
     parser = argparse.ArgumentParser(description="纯离线强化学习训练")
     parser.add_argument("--demo_paths", nargs="+", required=True, help="演示数据路径")
     parser.add_argument("--image_keys", nargs="+", default=["image"], help="图像键")
-    parser.add_argument(
-        "--setup_mode",
-        type=str,
-        default="single-arm-fixed-gripper",
-        choices=[
-            "single-arm-fixed-gripper",
-            "single-arm-learned-gripper",
-            "dual-arm-fixed-gripper",
-            "dual-arm-learned-gripper",
-        ],
-        help="设置模式",
-    )
     parser.add_argument("--batch_size", type=int, default=256, help="批次大小")
     parser.add_argument("--max_steps", type=int, default=50000, help="最大训练步数")
     parser.add_argument("--lr", type=float, default=3e-4, help="学习率")
@@ -176,7 +161,6 @@ def main():
     train_offline(
         demo_paths=args.demo_paths,
         image_keys=args.image_keys,
-        setup_mode=args.setup_mode,
         batch_size=args.batch_size,
         max_steps=args.max_steps,
         lr=args.lr,
