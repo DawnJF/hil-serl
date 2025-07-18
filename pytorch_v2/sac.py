@@ -163,7 +163,14 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    def __init__(self, image_dim=256, action_dim=16, hidden_dim=256):
+    def __init__(
+        self,
+        image_dim=256,
+        action_dim=16,
+        hidden_dim=256,
+        action_low=None,
+        action_high=None,
+    ):
         super().__init__()
         self.image_encoder = ImageEncoder(bottleneck_dim=image_dim)
 
@@ -173,9 +180,20 @@ class Actor(nn.Module):
         self.fc_mean = nn.Linear(hidden_dim, action_dim)
         self.fc_logstd = nn.Linear(hidden_dim, action_dim)
 
-        # action rescaling - 假设动作范围是[-1, 1]
-        self.register_buffer("action_scale", torch.ones(action_dim))
-        self.register_buffer("action_bias", torch.zeros(action_dim))
+        # action rescaling - 从实际数据范围计算
+        if action_low is not None and action_high is not None:
+            self.register_buffer(
+                "action_scale",
+                torch.tensor((action_high - action_low) / 2.0, dtype=torch.float32),
+            )
+            self.register_buffer(
+                "action_bias",
+                torch.tensor((action_high + action_low) / 2.0, dtype=torch.float32),
+            )
+        else:
+            # 默认假设动作范围是[-1, 1]
+            self.register_buffer("action_scale", torch.ones(action_dim))
+            self.register_buffer("action_bias", torch.zeros(action_dim))
 
     def forward(self, obs):
         # 处理图像观测
@@ -238,6 +256,28 @@ def create_replay_buffer_from_dataset(dataset, image_keys=["image"]):
     return rb
 
 
+def extract_action_range(dataset):
+    """从数据集中提取动作的范围"""
+    all_actions = []
+    for transition in dataset:
+        action = transition["actions"]
+        if hasattr(action, "numpy"):
+            action = action.numpy()
+        elif isinstance(action, list):
+            action = np.array(action)
+        all_actions.append(action)
+
+    all_actions = np.array(all_actions)
+    action_low = np.min(all_actions, axis=0)
+    action_high = np.max(all_actions, axis=0)
+
+    print(f"Action range: low={action_low}, high={action_high}")
+    return action_low, action_high
+
+
+"""
+cd /Users/majianfei/Projects/Github/ML/hil-serl/pytorch_v2 && python sac.py --total_timesteps 300 --batch_size 8 --dataset_path ../dataset/success_demo.pkl
+"""
 if __name__ == "__main__":
 
     args = tyro.cli(Args)
@@ -289,13 +329,16 @@ if __name__ == "__main__":
     rb = create_replay_buffer_from_dataset(dataset, image_keys=["image"])
     print(f"Created replay buffer with {len(rb)} transitions")
 
-    # 从数据集中推断动作维度
+    # 从数据集中推断动作维度和范围
     sample_action = dataset[0]["actions"]
     action_dim = (
         sample_action.shape[0]
         if hasattr(sample_action, "shape")
         else len(sample_action)
     )
+
+    # 提取动作范围
+    action_low, action_high = extract_action_range(dataset)
 
     # 从数据集中推断图像维度
     sample_obs = dataset[0]["observations"]
@@ -307,7 +350,12 @@ if __name__ == "__main__":
 
     # Initialize networks
     print("Initializing networks...")
-    actor = Actor(image_dim=256, action_dim=action_dim).to(device)
+    actor = Actor(
+        image_dim=256,
+        action_dim=action_dim,
+        action_low=action_low,
+        action_high=action_high,
+    ).to(device)
     qf1 = SoftQNetwork(image_dim=256, action_dim=action_dim).to(device)
     qf2 = SoftQNetwork(image_dim=256, action_dim=action_dim).to(device)
     qf1_target = SoftQNetwork(image_dim=256, action_dim=action_dim).to(device)
