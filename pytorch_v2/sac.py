@@ -78,6 +78,12 @@ class Args:
     """Entropy regularization coefficient."""
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
+    save_model: bool = True
+    """whether to save model checkpoints"""
+    save_frequency: int = 4000
+    """frequency to save model checkpoints"""
+    run_path: str = "runs"
+    """directory to save model checkpoints"""
 
 
 # ALGO LOGIC: initialize agent here:
@@ -283,6 +289,10 @@ if __name__ == "__main__":
     args = tyro.cli(Args)
     run_name = f"{args.exp_name}__{args.seed}__{int(time.time())}"
 
+    # Create run directory
+    run_dir = f"{args.run_path}/{run_name}"
+    os.makedirs(run_dir, exist_ok=True)
+
     # Setup logging
     # log_dir = f"logs/{run_name}"
     # os.makedirs(log_dir, exist_ok=True)
@@ -304,7 +314,7 @@ if __name__ == "__main__":
             monitor_gym=True,
             save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(run_dir)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -385,6 +395,11 @@ if __name__ == "__main__":
     start_time = time.time()
     print(f"Starting training for {args.total_timesteps} steps...")
 
+    # Create model save directory
+    if args.save_model:
+        os.makedirs(run_dir, exist_ok=True)
+        print(f"Model checkpoints will be saved to: {run_dir}")
+
     # Training loop - sample from dataset instead of environment interaction
     for global_step in tqdm(range(args.total_timesteps)):
         # ALGO LOGIC: training only (no environment interaction)
@@ -461,24 +476,23 @@ if __name__ == "__main__":
                         args.tau * param.data + (1 - args.tau) * target_param.data
                     )
 
+            # Log to tensorboard
+            writer.add_scalar(
+                "losses/qf1_values", qf1_a_values.mean().item(), global_step
+            )
+            writer.add_scalar(
+                "losses/qf2_values", qf2_a_values.mean().item(), global_step
+            )
+            writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
+            writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
+            writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
+            writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
+            writer.add_scalar("losses/alpha", alpha, global_step)
+
+            sps = int(global_step / (time.time() - start_time))
+            writer.add_scalar("charts/SPS", sps, global_step)
+
             if global_step % 50 == 0:
-                # Log to tensorboard
-                writer.add_scalar(
-                    "losses/qf1_values", qf1_a_values.mean().item(), global_step
-                )
-                writer.add_scalar(
-                    "losses/qf2_values", qf2_a_values.mean().item(), global_step
-                )
-                writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
-                writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
-                writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
-                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/alpha", alpha, global_step)
-
-                sps = int(global_step / (time.time() - start_time))
-                print("SPS:", sps)
-                writer.add_scalar("charts/SPS", sps, global_step)
-
                 # Log to logging
                 print(
                     f"Step {global_step}: "
@@ -494,6 +508,60 @@ if __name__ == "__main__":
                         "losses/alpha_loss", alpha_loss.item(), global_step
                     )
                     print(f"Alpha_loss={alpha_loss.item():.4f}")
+
+            # Save model checkpoints
+            if (
+                args.save_model
+                and global_step % args.save_frequency == 0
+                and global_step > 0
+            ):
+                checkpoint = {
+                    "global_step": global_step,
+                    "actor_state_dict": actor.state_dict(),
+                    "qf1_state_dict": qf1.state_dict(),
+                    "qf2_state_dict": qf2.state_dict(),
+                    "qf1_target_state_dict": qf1_target.state_dict(),
+                    "qf2_target_state_dict": qf2_target.state_dict(),
+                    "actor_optimizer_state_dict": actor_optimizer.state_dict(),
+                    "q_optimizer_state_dict": q_optimizer.state_dict(),
+                    "action_low": action_low,
+                    "action_high": action_high,
+                    "action_dim": action_dim,
+                    "args": vars(args),
+                }
+                if args.autotune:
+                    checkpoint["log_alpha"] = log_alpha
+                    checkpoint["a_optimizer_state_dict"] = a_optimizer.state_dict()
+                    checkpoint["alpha"] = alpha
+
+                checkpoint_path = os.path.join(run_dir, f"checkpoint_{global_step}.pt")
+                torch.save(checkpoint, checkpoint_path)
+                print(f"Saved checkpoint to {checkpoint_path}")
+
+    # Save final model
+    if args.save_model:
+        final_checkpoint = {
+            "global_step": args.total_timesteps,
+            "actor_state_dict": actor.state_dict(),
+            "qf1_state_dict": qf1.state_dict(),
+            "qf2_state_dict": qf2.state_dict(),
+            "qf1_target_state_dict": qf1_target.state_dict(),
+            "qf2_target_state_dict": qf2_target.state_dict(),
+            "actor_optimizer_state_dict": actor_optimizer.state_dict(),
+            "q_optimizer_state_dict": q_optimizer.state_dict(),
+            "action_low": action_low,
+            "action_high": action_high,
+            "action_dim": action_dim,
+            "args": vars(args),
+        }
+        if args.autotune:
+            final_checkpoint["log_alpha"] = log_alpha
+            final_checkpoint["a_optimizer_state_dict"] = a_optimizer.state_dict()
+            final_checkpoint["alpha"] = alpha
+
+        final_model_path = os.path.join(run_dir, "final_model.pt")
+        torch.save(final_checkpoint, final_model_path)
+        print(f"Saved final model to {final_model_path}")
 
     print("Training completed!")
     print(f"Total training time: {time.time() - start_time:.2f} seconds")
