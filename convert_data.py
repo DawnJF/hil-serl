@@ -188,20 +188,29 @@ def validate_data(pkl_path):
 if __name__ == "__main__":
 
     folder_list = [
-        ("take5", 122),  # 成功演示数据，成功索引
-        ("take5", 122),  # 失败演示数据，成功索引
+        ("take5", 122),
+        ("take17", 110),
+        ("take11", 123),
+        ("take31", 97),
+        ("take67", 138),
+        ("take107", 96),
+        ("take109", 108),
+        ("take132", 112),
+        ("take174", 106),
+        ("take197", 106),
+        ("take204", 81),
+        ("take216", 96),
+        ("take246", 88),
+        ("take305", 108),
+        ("take341", 97),
+        ("take389", 148),
+        ("take485", 195),
     ]
     # 转换数据
     transitions = load_and_convert_data(
-        data_path="/Users/majianfei/Downloads",
+        data_path="/liujinxin/dataset/bimanual/0707_tidy_tools_filtered/0707_new_1",
         folder_list=folder_list,
-        output_path="/Users/majianfei/Projects/Github/ML/hil-serl/dataset/success_demo.pkl",
+        output_path="/liujinxin/mjf/hil-serl/dataset/success_demo.pkl",
     )
-
-    # 验证数据
-    output_path = (
-        "/Users/majianfei/Projects/Github/ML/hil-serl/dataset/success_demo.pkl"
-    )
-    validate_data(output_path)
 
     print("\n转换完成!")

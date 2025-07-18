@@ -20,13 +20,13 @@
             "console": "integratedTerminal",
             "args": [
                 "--demo_paths",
-                "log/test_data/success_demo.pkl",
+                "/Users/majianfei/Downloads/success_demo.pkl",
                 "--save_dir",
                 "log/test_offline_demo",
                 "--max_steps",
                 "20",
                 "--batch_size",
-                "8"
+                "64"
             ]
         }
     ]

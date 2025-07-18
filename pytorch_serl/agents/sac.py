@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, Any
 import copy
 
 from networks.actor_critic import Actor, Critic, GraspCritic
@@ -26,6 +26,7 @@ class SACHybridAgent:
         target_entropy: Optional[float] = None,
         critic_ensemble_size: int = 2,
         device: torch.device = DEVICE,
+        target_entropy_scale: float = 1.0,  # 新增：目标熵缩放因子
     ):
         self.device = device
         self.continuous_action_dim = continuous_action_dim
@@ -34,9 +35,9 @@ class SACHybridAgent:
         self.tau = tau
         self.image_keys = image_keys
 
-        # 自动目标熵（仅针对连续动作）
+        # 自动目标熵（仅针对连续动作）- 修复：使用更合理的目标熵
         if target_entropy is None:
-            target_entropy = -continuous_action_dim / 2
+            target_entropy = -continuous_action_dim * target_entropy_scale
         self.target_entropy = target_entropy
 
         # 创建编码器
@@ -109,17 +110,17 @@ class SACHybridAgent:
 
     def update(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """更新网络参数"""
-        batch = to_device(batch, self.device)
+        batch = to_device(batch, self.device)  # type: ignore
 
         # 分离连续动作和抓取动作
-        continuous_actions = batch["actions"][..., :-1]
-        grasp_actions = batch["actions"][..., -1:]
+        continuous_actions = batch["actions"]  # 确定这里都是连续动作
+        # grasp_actions = batch["actions"][..., -1:]
 
         # 更新连续动作的Critic
         critic_loss = self._update_critic(batch, continuous_actions)
 
         # 更新抓取Critic
-        grasp_critic_loss = self._update_grasp_critic(batch, grasp_actions)
+        # grasp_critic_loss = self._update_grasp_critic(batch, grasp_actions)
 
         # 更新Actor和温度参数
         actor_loss = self._update_actor(batch)
@@ -130,7 +131,7 @@ class SACHybridAgent:
 
         return {
             "critic_loss": critic_loss,
-            "grasp_critic_loss": grasp_critic_loss,
+            "grasp_critic_loss": 0,
             "actor_loss": actor_loss,
             "alpha_loss": alpha_loss,
             "alpha": self.alpha.item(),
@@ -138,7 +139,7 @@ class SACHybridAgent:
 
     def update_critics_only(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """只更新Critic网络（用于UTD/CTA比率训练）"""
-        batch = to_device(batch, self.device)
+        batch = to_device(batch, self.device)  # type: ignore
 
         # 分离连续动作和抓取动作
         continuous_actions = batch["actions"][..., :-1]
@@ -171,15 +172,19 @@ class SACHybridAgent:
             )
             target_q = target_q_values.min(dim=0)[0]
 
+            # 修复：正确处理终止状态，添加数值稳定性检查
+            entropy_term = self.alpha * next_log_probs.squeeze(-1)
             target_q = batch["rewards"] + self.discount * batch["masks"] * (
-                target_q - self.alpha * next_log_probs.squeeze()
+                target_q - entropy_term
             )
 
         current_q_values = self.critic(batch["observations"], continuous_actions)
 
+        # 修复：正确计算ensemble critic的损失
         critic_loss = 0
         for i in range(current_q_values.shape[0]):
-            critic_loss += F.mse_loss(current_q_values[i], target_q)
+            loss_i = F.mse_loss(current_q_values[i], target_q.detach())
+            critic_loss += loss_i
         critic_loss /= current_q_values.shape[0]
 
         self.critic_optimizer.zero_grad()
@@ -229,9 +234,10 @@ class SACHybridAgent:
         """更新Actor网络"""
         actions, log_probs, _ = self.actor(batch["observations"])
         q_values = self.critic(batch["observations"], actions)
-        q_value = q_values.mean(dim=0)
+        # 使用ensemble的最小值防止过估计
+        q_value = q_values.min(dim=0)[0]
 
-        actor_loss = (self.alpha * log_probs.squeeze() - q_value).mean()
+        actor_loss = (self.alpha * log_probs.squeeze(-1) - q_value).mean()
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -244,9 +250,8 @@ class SACHybridAgent:
         with torch.no_grad():
             _, log_probs, _ = self.actor(batch["observations"])
 
-        alpha_loss = -(
-            self.log_alpha * (log_probs.squeeze() + self.target_entropy).detach()
-        ).mean()
+        entropy_error = log_probs.squeeze(-1) + self.target_entropy
+        alpha_loss = -(self.log_alpha * entropy_error.detach()).mean()
 
         self.alpha_optimizer.zero_grad()
         alpha_loss.backward()

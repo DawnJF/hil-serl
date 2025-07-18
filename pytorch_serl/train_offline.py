@@ -1,5 +1,6 @@
 """纯离线训练脚本（仅learner）"""
 
+import logging
 import os
 import argparse
 import pickle as pkl
@@ -10,6 +11,7 @@ from collections import defaultdict
 
 from agents.sac import SACHybridAgent
 from data.replay_buffer import ReplayBuffer
+from utils import logger_utils
 from utils.device import DEVICE, to_device
 
 
@@ -18,7 +20,7 @@ def load_demo_data(demo_paths, replay_buffer):
     total_transitions = 0
 
     for demo_path in demo_paths:
-        print(f"加载演示数据: {demo_path}")
+        logging.info(f"加载演示数据: {demo_path}")
         with open(demo_path, "rb") as f:
             demo_data = pkl.load(f)
 
@@ -38,7 +40,7 @@ def load_demo_data(demo_paths, replay_buffer):
             replay_buffer.insert(transition)
             total_transitions += 1
 
-    print(f"总共加载了 {total_transitions} 个转换")
+    logging.info(f"总共加载了 {total_transitions} 个转换")
     return total_transitions
 
 
@@ -64,13 +66,13 @@ def train_offline(
         save_dir: 保存目录
         log_interval: 日志间隔
     """
-    print(f"使用设备: {device}")
+    logging.info(f"使用设备: {device}")
 
     # 创建重放缓冲区
     replay_buffer = ReplayBuffer(capacity=200000, image_keys=image_keys)
 
     # 加载演示数据
-    print("加载演示数据...")
+    logging.info("加载演示数据...")
     load_demo_data(demo_paths, replay_buffer)
 
     if len(replay_buffer) < batch_size:
@@ -81,22 +83,26 @@ def train_offline(
     # 确定动作维度
     sample_batch = replay_buffer.sample(1, device)
     action_dim = sample_batch["actions"].shape[-1]
-    print(f"动作维度: {action_dim}")
+    logging.info(f"动作维度: {action_dim}")
 
     # 创建智能体
-    continuous_action_dim = action_dim - 1  # 最后一维是抓取动作
+    # continuous_action_dim = action_dim - 1  # 最后一维是抓取动作
+    continuous_action_dim = action_dim
     agent = SACHybridAgent(
         image_keys=image_keys,
         continuous_action_dim=continuous_action_dim,
         grasp_action_dim=3,
         lr=lr,
         device=device,
+        # 离线训练需要更保守的设置
+        discount=0.99,  # 更高的折扣因子
+        tau=0.005,  # 更慢的目标网络更新
+        target_entropy_scale=0.1,  # 修复：更低的熵正则化，防止alpha爆炸
     )
-    print(f"创建混合SAC智能体 (连续动作维度: {continuous_action_dim})")
+    logging.info(f"创建混合SAC智能体 (连续动作维度: {continuous_action_dim})")
 
     # 训练循环
-    print("开始离线训练...")
-    os.makedirs(save_dir, exist_ok=True)
+    logging.info("开始离线训练...")
 
     metrics = defaultdict(list)
 
@@ -120,18 +126,35 @@ def train_offline(
             log_str += ", ".join(
                 [f"{key}={value:.4f}" for key, value in avg_metrics.items()]
             )
-            print(log_str)
+            logging.info(log_str)
+
+            # 额外的调试信息
+            if step % (log_interval * 10) == 0:
+                sample_batch = replay_buffer.sample(32, device)
+                with torch.no_grad():
+                    actions, log_probs, _ = agent.actor(sample_batch["observations"])
+                    q_values = agent.critic(sample_batch["observations"], actions)
+                    logging.info(
+                        f"  Debug - Q值范围: [{q_values.min().item():.3f}, {q_values.max().item():.3f}]"
+                    )
+                    logging.info(
+                        f"  Debug - 奖励范围: [{sample_batch['rewards'].min().item():.3f}, {sample_batch['rewards'].max().item():.3f}]"
+                    )
+                    logging.info(f"  Debug - Alpha: {agent.alpha.item():.4f}")
+                    logging.info(
+                        f"  Debug - 对数概率范围: [{log_probs.min().item():.3f}, {log_probs.max().item():.3f}]"
+                    )
 
         # 保存检查点
         if step % 10000 == 0 and step > 0:
             checkpoint_path = os.path.join(save_dir, f"checkpoint_{step}.pth")
             agent.save(checkpoint_path)
-            print(f"保存检查点: {checkpoint_path}")
+            logging.info(f"保存检查点: {checkpoint_path}")
 
     # 保存最终模型
     final_path = os.path.join(save_dir, "final_model.pth")
     agent.save(final_path)
-    print(f"保存最终模型: {final_path}")
+    logging.info(f"保存最终模型: {final_path}")
 
     return agent
 
@@ -141,21 +164,28 @@ def main():
     parser.add_argument("--demo_paths", nargs="+", required=True, help="演示数据路径")
     parser.add_argument("--image_keys", nargs="+", default=["image"], help="图像键")
     parser.add_argument("--batch_size", type=int, default=256, help="批次大小")
-    parser.add_argument("--max_steps", type=int, default=50000, help="最大训练步数")
+    parser.add_argument("--max_steps", type=int, default=1000000, help="最大训练步数")
     parser.add_argument("--lr", type=float, default=3e-4, help="学习率")
     parser.add_argument(
-        "--save_dir", type=str, default="./offline_ckpt", help="保存目录"
+        "--save_dir",
+        type=str,
+        default="/liujinxin/mjf/hil-serl/log/offline",
+        help="保存目录",
     )
     parser.add_argument("--log_interval", type=int, default=100, help="日志间隔")
 
     args = parser.parse_args()
+    os.makedirs(args.save_dir, exist_ok=True)
+
+    logger_utils.setup_logging(args.save_dir)
 
     # 验证演示数据文件存在
     for demo_path in args.demo_paths:
         if not os.path.exists(demo_path):
+            logging.error(f"演示数据文件不存在: {demo_path}")
             raise FileNotFoundError(f"演示数据文件不存在: {demo_path}")
 
-    print(f"演示数据文件: {args.demo_paths}")
+    logging.info(f"演示数据文件: {args.demo_paths}")
 
     # 开始训练
     train_offline(

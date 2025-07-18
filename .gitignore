@@ -7,3 +7,5 @@ __pycache__/
 wandb/
 .DS_Store
 log/
+pytorch_v2/runs
+dataset
