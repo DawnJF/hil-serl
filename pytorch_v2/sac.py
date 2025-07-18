@@ -487,9 +487,6 @@ if __name__ == "__main__":
             writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
             writer.add_scalar("losses/alpha", alpha, global_step)
 
-            sps = int(global_step / (time.time() - start_time))
-            writer.add_scalar("charts/SPS", sps, global_step)
-
             if global_step % 50 == 0:
                 # Log to logging
                 logging.info(
@@ -498,7 +495,6 @@ if __name__ == "__main__":
                     f"QF2_loss={qf2_loss.item():.4f}, "
                     f"Actor_loss={actor_loss.item():.4f}, "
                     f"Alpha={alpha:.4f}, "
-                    f"SPS={sps}"
                 )
 
                 if args.autotune:
