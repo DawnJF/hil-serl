@@ -187,7 +187,26 @@ def validate_data(pkl_path):
 
 if __name__ == "__main__":
 
-    folder_list = [
+    # folder_list = [
+    #     ("take5", 122),
+    #     ("take17", 110),
+    #     ("take11", 123),
+    #     ("take31", 97),
+    #     ("take67", 138),
+    #     ("take107", 96),
+    #     ("take109", 108),
+    #     ("take132", 112),
+    #     ("take174", 106),
+    #     ("take197", 106),
+    #     ("take204", 81),
+    #     ("take216", 96),
+    #     ("take246", 88),
+    #     ("take305", 108),
+    #     ("take341", 97),
+    #     ("take389", 148),
+    #     ("take485", 195),
+    # ]
+    folder_list_v2 = [
         ("take5", 122),
         ("take17", 110),
         ("take11", 123),
@@ -205,12 +224,23 @@ if __name__ == "__main__":
         ("take341", 97),
         ("take389", 148),
         ("take485", 195),
+        ############
+        ("take503", 76),
+        ("take509", 97),
+        ("take510", 97),
+        ("take511", 129),
+        ("take515", 81),
+        ("take516", 71),
+        ("take535", 85),
+        ("take540", 86),
+        ("take545", 121),
+        ("take552", 94),
     ]
     # 转换数据
     transitions = load_and_convert_data(
         data_path="/liujinxin/dataset/bimanual/0707_tidy_tools_filtered/0707_new_1",
-        folder_list=folder_list,
-        output_path="/liujinxin/mjf/hil-serl/dataset/success_demo.pkl",
+        folder_list=folder_list_v2,
+        output_path=f"/liujinxin/mjf/hil-serl/dataset/success_demo_{len(folder_list_v2)}.pkl",
     )
 
     print("\n转换完成!")
