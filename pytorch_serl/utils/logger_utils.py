@@ -20,10 +20,11 @@ def get_logger(out_dir):
     return logger
 
 
-def setup_logging(out_dir, debug=False):
-    level = logging.DEBUG if debug else logging.INFO
+def setup_logging(out_dir):
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
     logging.basicConfig(
-        level=level,
+        level=logging.DEBUG,
         format="%(asctime)s %(process)d %(levelname)s %(message)s",
         handlers=[
             logging.FileHandler(os.path.join(out_dir, "run.log")),

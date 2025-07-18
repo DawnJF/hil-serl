@@ -8,7 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # Import from sac.py
-from sac import Actor, SoftQNetwork, ImageEncoder, load_dataset, extract_action_range
+from sac import Actor, load_dataset
 from pytorch_serl.utils.device import get_device
 
 
@@ -24,6 +24,7 @@ class TestArgs:
     """whether to create visualizations"""
     save_results: bool = True
     """whether to save test results"""
+    run_dir: str = "runs/test"
 
 
 def load_model(model_path, device):
@@ -211,6 +212,11 @@ def main():
     print("SAC Model Testing")
     print(f"Args: {vars(args)}")
 
+    run_dir = os.path.join(
+        args.run_dir, args.model_path.split("/")[-1].replace(".pt", "")
+    )
+    os.makedirs(run_dir, exist_ok=True)
+
     # Load model
     actor, checkpoint = load_model(args.model_path, device)
 
@@ -243,15 +249,14 @@ def main():
     # Save results
     if args.save_results:
         results_path = "test_results.pkl"
-        with open(results_path, "wb") as f:
+        with open(os.path.join(run_dir, results_path), "wb") as f:
             pickle.dump(results, f)
         print(f"\nSaved detailed results to {results_path}")
 
     # Visualize results
     if args.visualize:
-        visualize_results(
-            results, "test_results_visualization.png" if args.save_results else None
-        )
+        file = os.path.join(run_dir, "test_results_visualization.png")
+        visualize_results(results, file if args.save_results else None)
 
 
 if __name__ == "__main__":

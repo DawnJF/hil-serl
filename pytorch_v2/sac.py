@@ -258,7 +258,7 @@ def create_replay_buffer_from_dataset(dataset, image_keys=["image"]):
     for transition in dataset:
         rb.insert(transition)
 
-    print(f"Loaded {len(rb)} transitions from dataset")
+    logging.info(f"Loaded {len(rb)} transitions from dataset")
     return rb
 
 
@@ -277,7 +277,7 @@ def extract_action_range(dataset):
     action_low = np.min(all_actions, axis=0)
     action_high = np.max(all_actions, axis=0)
 
-    print(f"Action range: low={action_low}, high={action_high}")
+    logging.info(f"Action range: low={action_low}, high={action_high}")
     return action_low, action_high
 
 
@@ -294,13 +294,11 @@ if __name__ == "__main__":
     os.makedirs(run_dir, exist_ok=True)
 
     # Setup logging
-    # log_dir = f"logs/{run_name}"
-    # os.makedirs(log_dir, exist_ok=True)
-    # setup_logging(log_dir)
+    setup_logging(run_dir)
 
-    print("Starting SAC training with demonstration data")
-    print(f"Run name: {run_name}")
-    print(f"Args: {vars(args)}")
+    logging.info("Starting SAC training with demonstration data")
+    logging.info(f"Run name: {run_name}")
+    logging.info(f"Args: {vars(args)}")
 
     if args.track:
         import wandb
@@ -322,22 +320,22 @@ if __name__ == "__main__":
     )
 
     # TRY NOT TO MODIFY: seeding
-    print(f"Setting seed: {args.seed}")
+    logging.info(f"Setting seed: {args.seed}")
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = get_device()
-    print(f"Using device: {device}")
+    logging.info(f"Using device: {device}")
 
     # Load dataset instead of creating environment
-    print("Loading dataset...")
+    logging.info("Loading dataset...")
     dataset = load_dataset(args.dataset_path)
 
     # Create replay buffer from dataset
     rb = create_replay_buffer_from_dataset(dataset, image_keys=["image"])
-    print(f"Created replay buffer with {len(rb)} transitions")
+    logging.info(f"Created replay buffer with {len(rb)} transitions")
 
     # 从数据集中推断动作维度和范围
     sample_action = dataset[0]["actions"]
@@ -354,12 +352,12 @@ if __name__ == "__main__":
     sample_obs = dataset[0]["observations"]
     if "image" in sample_obs:
         image_shape = sample_obs["image"].shape
-        print(f"Image shape: {image_shape}")
+        logging.info(f"Image shape: {image_shape}")
 
-    print(f"Action dimension: {action_dim}")
+    logging.info(f"Action dimension: {action_dim}")
 
     # Initialize networks
-    print("Initializing networks...")
+    logging.info("Initializing networks...")
     actor = Actor(
         image_dim=256,
         action_dim=action_dim,
@@ -373,7 +371,7 @@ if __name__ == "__main__":
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
 
-    print("Initializing optimizers...")
+    logging.info("Initializing optimizers...")
     q_optimizer = optim.Adam(
         list(qf1.parameters()) + list(qf2.parameters()), lr=args.q_lr
     )
@@ -387,18 +385,18 @@ if __name__ == "__main__":
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
         alpha = log_alpha.exp().item()
         a_optimizer = optim.Adam([log_alpha], lr=args.q_lr)
-        print(f"Auto-tuning entropy with target: {target_entropy}")
+        logging.info(f"Auto-tuning entropy with target: {target_entropy}")
     else:
         alpha = args.alpha
-        print(f"Using fixed alpha: {alpha}")
+        logging.info(f"Using fixed alpha: {alpha}")
 
     start_time = time.time()
-    print(f"Starting training for {args.total_timesteps} steps...")
+    logging.info(f"Starting training for {args.total_timesteps} steps...")
 
     # Create model save directory
     if args.save_model:
         os.makedirs(run_dir, exist_ok=True)
-        print(f"Model checkpoints will be saved to: {run_dir}")
+        logging.info(f"Model checkpoints will be saved to: {run_dir}")
 
     # Training loop - sample from dataset instead of environment interaction
     for global_step in tqdm(range(args.total_timesteps)):
@@ -494,7 +492,7 @@ if __name__ == "__main__":
 
             if global_step % 50 == 0:
                 # Log to logging
-                print(
+                logging.info(
                     f"Step {global_step}: "
                     f"QF1_loss={qf1_loss.item():.4f}, "
                     f"QF2_loss={qf2_loss.item():.4f}, "
@@ -507,7 +505,7 @@ if __name__ == "__main__":
                     writer.add_scalar(
                         "losses/alpha_loss", alpha_loss.item(), global_step
                     )
-                    print(f"Alpha_loss={alpha_loss.item():.4f}")
+                    logging.info(f"Alpha_loss={alpha_loss.item():.4f}")
 
             # Save model checkpoints
             if (
@@ -536,7 +534,7 @@ if __name__ == "__main__":
 
                 checkpoint_path = os.path.join(run_dir, f"checkpoint_{global_step}.pt")
                 torch.save(checkpoint, checkpoint_path)
-                print(f"Saved checkpoint to {checkpoint_path}")
+                logging.info(f"Saved checkpoint to {checkpoint_path}")
 
     # Save final model
     if args.save_model:
@@ -561,8 +559,8 @@ if __name__ == "__main__":
 
         final_model_path = os.path.join(run_dir, "final_model.pt")
         torch.save(final_checkpoint, final_model_path)
-        print(f"Saved final model to {final_model_path}")
+        logging.info(f"Saved final model to {final_model_path}")
 
-    print("Training completed!")
-    print(f"Total training time: {time.time() - start_time:.2f} seconds")
+    logging.info("Training completed!")
+    logging.info(f"Total training time: {time.time() - start_time:.2f} seconds")
     writer.close()
