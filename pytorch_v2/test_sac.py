@@ -1,5 +1,4 @@
 import os
-import pickle
 import torch
 import numpy as np
 from dataclasses import dataclass
@@ -16,15 +15,15 @@ from pytorch_serl.utils.device import get_device
 class TestArgs:
     model_path: str = "models/final_model.pt"
     """path to the trained model checkpoint"""
-    dataset_path: str = "../dataset/success_demo.pkl"
+    dataset_path: str = "dataset/success_demo_27.pkl"
     """path to the test dataset"""
-    num_test_samples: int = 100
+    num_test_samples: int = 1000
     """number of samples to test"""
     visualize: bool = True
     """whether to create visualizations"""
     save_results: bool = True
     """whether to save test results"""
-    run_dir: str = "runs/test"
+    run_dir: str = "runs/test2"
 
 
 def load_model(model_path, device):
@@ -248,9 +247,38 @@ def main():
 
     # Save results
     if args.save_results:
-        results_path = "test_results.pkl"
-        with open(os.path.join(run_dir, results_path), "wb") as f:
-            pickle.dump(results, f)
+        results_path = "test_results.txt"
+        with open(os.path.join(run_dir, results_path), "w") as f:
+            f.write("SAC Model Test Results\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(f"Model Path: {args.model_path}\n")
+            f.write(f"Dataset Path: {args.dataset_path}\n")
+            f.write(f"Number of test samples: {len(results['action_errors'])}\n\n")
+
+            f.write("Error Statistics:\n")
+            f.write("-" * 20 + "\n")
+            f.write(f"Mean MSE Error: {results['mean_error']:.6f}\n")
+            f.write(f"Std MSE Error: {results['std_error']:.6f}\n")
+            f.write(f"Median MSE Error: {results['median_error']:.6f}\n")
+            f.write(f"Min MSE Error: {np.min(results['action_errors']):.6f}\n")
+            f.write(f"Max MSE Error: {np.max(results['action_errors']):.6f}\n\n")
+
+            f.write("Action Statistics:\n")
+            f.write("-" * 20 + "\n")
+            f.write(f"True action mean: {np.mean(results['true_actions'], axis=0)}\n")
+            f.write(f"True action std: {np.std(results['true_actions'], axis=0)}\n")
+            f.write(
+                f"Predicted action mean: {np.mean(results['predicted_actions'], axis=0)}\n"
+            )
+            f.write(
+                f"Predicted action std: {np.std(results['predicted_actions'], axis=0)}\n\n"
+            )
+
+            f.write("Per-sample Errors:\n")
+            f.write("-" * 20 + "\n")
+            for i, error in enumerate(results["action_errors"]):
+                f.write(f"Sample {i+1}: {error:.6f}\n")
+
         print(f"\nSaved detailed results to {results_path}")
 
     # Visualize results
