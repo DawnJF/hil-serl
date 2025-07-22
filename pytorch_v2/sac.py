@@ -20,12 +20,11 @@ import torchvision.models as models
 # Import local modules
 import sys
 
-from pytorch_v2.utils import batched_random_crop
-
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from pytorch_serl.data.replay_buffer import ReplayBuffer as CustomReplayBuffer
 from pytorch_serl.utils.device import get_device
 from pytorch_serl.utils.logger_utils import setup_logging
+from pytorch_v2.utils import batched_random_crop
 
 
 @dataclass
@@ -48,7 +47,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Data specific arguments
-    dataset_path: str = "dataset/success_demo.pkl"
+    dataset_path: str = "dataset/success_demo_27_v2.pkl"
     """path to the demonstration dataset"""
 
     # Algorithm specific arguments
@@ -121,6 +120,8 @@ class ImageEncoder(nn.Module):
             nn.Dropout(0.1),
             nn.Linear(bottleneck_dim, bottleneck_dim),
             nn.ReLU(),
+            nn.Linear(bottleneck_dim, bottleneck_dim),
+            nn.ReLU(),
         )
 
     def forward(self, x):
@@ -132,35 +133,74 @@ class ImageEncoder(nn.Module):
         return x
 
 
-class SoftQNetwork(nn.Module):
-    def __init__(self, image_dim=256, action_dim=16, hidden_dim=256):
+class ProprioEncoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim),
+            nn.LayerNorm(output_dim),
+            nn.Tanh(),
+        )
+
+    def forward(self, state):
+        return self.encoder(state)
+
+
+class EncoderWrapper(nn.Module):
+    def __init__(self, image_dim=512, proprio_dim=16, hidden_dim=256):
         super().__init__()
         self.image_encoder = ImageEncoder(bottleneck_dim=image_dim)
+        self.proprio_encoder = ProprioEncoder(
+            input_dim=proprio_dim, hidden_dim=64, output_dim=64
+        )
 
-        # Q网络
-        self.fc1 = nn.Linear(image_dim + action_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, 1)
-
-    def forward(self, obs, a):
-        # 处理图像观测
+    def forward(self, obs):
         if isinstance(obs, dict):
             image = obs["image"]
+            state = obs["state"]
         else:
             image = obs
+            state = None
 
         # 确保图像在正确的设备上并且格式正确
         if len(image.shape) == 4:  # (B, H, W, C) -> (B, C, H, W)
             if image.shape[-1] == 3:
                 image = image.permute(0, 3, 1, 2)
 
-        # 归一化到[0,1]
-        if image.dtype == torch.uint8:
-            image = image.float() / 255.0
-
         image_features = self.image_encoder(image)
-        x = torch.cat([image_features, a], 1)
-        x = F.relu(self.fc1(x))
+        if state is not None:
+            state_features = self.proprio_encoder(state)
+            return torch.cat([image_features, state_features], dim=-1)
+        return image_features
+
+    def get_out_shape(self, image_shape=(128, 128, 3)):
+        """获取编码器输出的形状"""
+
+        image_shape = image_shape[:2]  # (H, W)
+        fake_obs = {
+            "image": torch.zeros(1, 3, *image_shape),
+            "state": torch.zeros(1, 16),  # 假设状态维度为16
+        }
+        return self.forward(fake_obs).shape[1]
+
+
+class SoftQNetwork(nn.Module):
+    def __init__(self, image_shape, image_dim=256, action_dim=16, hidden_dim=256):
+        super().__init__()
+        self.encoder = EncoderWrapper(image_dim=image_dim)
+
+        encode_dim = self.encoder.get_out_shape(image_shape)
+
+        # Q网络
+        self.fc1 = nn.Linear(encode_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, 1)
+
+    def forward(self, obs, a):
+        features = self.encoder(obs)
+        x = F.relu(self.fc1(features))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
@@ -173,6 +213,7 @@ LOG_STD_MIN = -5
 class Actor(nn.Module):
     def __init__(
         self,
+        image_shape,
         image_dim=256,
         action_dim=16,
         hidden_dim=256,
@@ -180,10 +221,12 @@ class Actor(nn.Module):
         action_high=None,
     ):
         super().__init__()
-        self.image_encoder = ImageEncoder(bottleneck_dim=image_dim)
+        self.encoder = EncoderWrapper(image_dim=image_dim)
+
+        encode_dim = self.encoder.get_out_shape(image_shape)
 
         # Actor网络
-        self.fc1 = nn.Linear(image_dim, hidden_dim)
+        self.fc1 = nn.Linear(encode_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc_mean = nn.Linear(hidden_dim, action_dim)
         self.fc_logstd = nn.Linear(hidden_dim, action_dim)
@@ -204,23 +247,8 @@ class Actor(nn.Module):
             self.register_buffer("action_bias", torch.zeros(action_dim))
 
     def forward(self, obs):
-        # 处理图像观测
-        if isinstance(obs, dict):
-            image = obs["image"]
-        else:
-            image = obs
-
-        # 确保图像在正确的设备上并且格式正确
-        if len(image.shape) == 4:  # (B, H, W, C) -> (B, C, H, W)
-            if image.shape[-1] == 3:
-                image = image.permute(0, 3, 1, 2)
-
-        # 归一化到[0,1]
-        if image.dtype == torch.uint8:
-            image = image.float() / 255.0
-
-        image_features = self.image_encoder(image)
-        x = F.relu(self.fc1(image_features))
+        features = self.encoder(obs)
+        x = F.relu(self.fc1(features))
         x = F.relu(self.fc2(x))
         mean = self.fc_mean(x)
         log_std = self.fc_logstd(x)
@@ -361,15 +389,24 @@ if __name__ == "__main__":
     # Initialize networks
     logging.info("Initializing networks...")
     actor = Actor(
+        image_shape=image_shape,
         image_dim=256,
         action_dim=action_dim,
         action_low=action_low,
         action_high=action_high,
     ).to(device)
-    qf1 = SoftQNetwork(image_dim=256, action_dim=action_dim).to(device)
-    qf2 = SoftQNetwork(image_dim=256, action_dim=action_dim).to(device)
-    qf1_target = SoftQNetwork(image_dim=256, action_dim=action_dim).to(device)
-    qf2_target = SoftQNetwork(image_dim=256, action_dim=action_dim).to(device)
+    qf1 = SoftQNetwork(
+        image_shape=image_shape, image_dim=256, action_dim=action_dim
+    ).to(device)
+    qf2 = SoftQNetwork(
+        image_shape=image_shape, image_dim=256, action_dim=action_dim
+    ).to(device)
+    qf1_target = SoftQNetwork(
+        image_shape=image_shape, image_dim=256, action_dim=action_dim
+    ).to(device)
+    qf2_target = SoftQNetwork(
+        image_shape=image_shape, image_dim=256, action_dim=action_dim
+    ).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
 
@@ -407,9 +444,11 @@ if __name__ == "__main__":
             data = rb.sample(args.batch_size, device)
 
             # image augmentation
-            data["observations"] = batched_random_crop(data["observations"], padding=4)
-            data["next_observations"] = batched_random_crop(
-                data["next_observations"], padding=4
+            data["observations"]["image"] = batched_random_crop(
+                data["observations"]["image"], padding=4
+            )
+            data["next_observations"]["image"] = batched_random_crop(
+                data["next_observations"]["image"], padding=4
             )
 
             with torch.no_grad():

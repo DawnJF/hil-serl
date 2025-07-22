@@ -59,13 +59,16 @@ def process_trajectory(transitions, data_path, image_base_path, success_index):
             if next_image.shape[0] == 3:  # 如果是CHW，转换为HWC
                 next_image = next_image.transpose(1, 2, 0)
 
-        # 构建观测数据
-        observations = {"image": current_image}
+        current_state = np.array(current_frame["joint_angles"], dtype=np.float32)
+        next_state = np.array(next_frame["joint_angles"], dtype=np.float32)
 
-        next_observations = {"image": next_image}
+        # 构建观测数据
+        observations = {"image": current_image, "state": current_state}
+
+        next_observations = {"image": next_image, "state": next_state}
 
         # 动作数据 (使用joint_angles)
-        actions = np.array(current_frame["joint_angles"], dtype=np.float32)
+        actions = next_state
 
         if i >= success_index:
             reward = 1.0  # 奖励 (由于是演示数据，给予正奖励)
