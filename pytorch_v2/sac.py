@@ -20,6 +20,8 @@ import torchvision.models as models
 # Import local modules
 import sys
 
+from pytorch_v2.utils import batched_random_crop
+
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from pytorch_serl.data.replay_buffer import ReplayBuffer as CustomReplayBuffer
 from pytorch_serl.utils.device import get_device
@@ -403,6 +405,12 @@ if __name__ == "__main__":
         # ALGO LOGIC: training only (no environment interaction)
         if len(rb) >= args.batch_size:
             data = rb.sample(args.batch_size, device)
+
+            # image augmentation
+            data["observations"] = batched_random_crop(data["observations"], padding=4)
+            data["next_observations"] = batched_random_crop(
+                data["next_observations"], padding=4
+            )
 
             with torch.no_grad():
                 next_state_actions, next_state_log_pi, _ = actor.get_action(
