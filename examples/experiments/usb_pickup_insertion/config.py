@@ -19,35 +19,19 @@ from experiments.config import DefaultTrainingConfig
 from experiments.usb_pickup_insertion.wrapper import USBEnv, GripperPenaltyWrapper
 
 
-class EnvConfig(DefaultEnvConfig):
+class UREnvConfig(DefaultEnvConfig):
     SERVER_URL: str = "http://127.0.0.2:5000/"
     REALSENSE_CAMERAS = {
-        "wrist_1": {
-            "serial_number": "127122270350",
+        "wrist": {
             "dim": (1280, 720),
-            "exposure": 10500,
         },
-        "wrist_2": {
-            "serial_number": "127122270146",
+        "rgb": {
             "dim": (1280, 720),
-            "exposure": 10500,
-        },
-        "side_policy": {
-            "serial_number": "130322274175",
-            "dim": (1280, 720),
-            "exposure": 13000,
-        },
-        "side_classifier": {
-            "serial_number": "130322274175",
-            "dim": (1280, 720),
-            "exposure": 13000,
         },
     }
     IMAGE_CROP = {
-        "wrist_1": lambda img: img[50:-200, 200:-200],
-        "wrist_2": lambda img: img[:-200, 200:-200],
-        "side_policy": lambda img: img[250:500, 350:650],
-        "side_classifier": lambda img: img[270:398, 500:628],
+        "wrist": lambda img: img[50:-200, 200:-200],
+        "rgb": lambda img: img[:-200, 200:-200],
     }
     TARGET_POSE = np.array(
         [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
@@ -116,8 +100,8 @@ class TrainConfig(DefaultTrainingConfig):
     setup_mode = "single-arm-learned-gripper"
 
     def get_environment(self, fake_env=False, save_video=False, classifier=False):
-        env = USBEnv(fake_env=fake_env, save_video=save_video, config=EnvConfig())
-        # env = UR_Platform_Env(fake_env=fake_env, config=EnvConfig())
+        env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
+        # env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
         if not fake_env:
             env = SpacemouseIntervention(env)
         env = RelativeFrame(env)
