@@ -1,4 +1,5 @@
 import multiprocessing
+from time import time
 import numpy as np
 from franka_env.spacemouse import pyspacemouse
 from typing import Tuple
@@ -33,16 +34,28 @@ class SpaceMouseExpert:
 
             if len(state) == 2:
                 action = [
-                    -state[0].y, state[0].x, state[0].z,
-                    -state[0].roll, -state[0].pitch, -state[0].yaw,
-                    -state[1].y, state[1].x, state[1].z,
-                    -state[1].roll, -state[1].pitch, -state[1].yaw
+                    -state[0].y,
+                    state[0].x,
+                    state[0].z,
+                    -state[0].roll,
+                    -state[0].pitch,
+                    -state[0].yaw,
+                    -state[1].y,
+                    state[1].x,
+                    state[1].z,
+                    -state[1].roll,
+                    -state[1].pitch,
+                    -state[1].yaw,
                 ]
                 buttons = state[0].buttons + state[1].buttons
             elif len(state) == 1:
                 action = [
-                    -state[0].y, state[0].x, state[0].z,
-                    -state[0].roll, -state[0].pitch, -state[0].yaw
+                    -state[0].y,
+                    state[0].x,
+                    state[0].z,
+                    -state[0].roll,
+                    -state[0].pitch,
+                    -state[0].yaw,
                 ]
                 buttons = state[0].buttons
 
@@ -55,7 +68,16 @@ class SpaceMouseExpert:
         action = self.latest_data["action"]
         buttons = self.latest_data["buttons"]
         return np.array(action), buttons
-    
+
     def close(self):
         # pyspacemouse.close()
         self.process.terminate()
+
+
+if __name__ == "__main__":
+    """mybe need sudo"""
+    sm = SpaceMouseExpert()
+    while True:
+        action, buttons = sm.get_action()
+        print(action, buttons)
+        time.sleep(0.01)
