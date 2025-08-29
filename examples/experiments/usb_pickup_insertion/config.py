@@ -217,11 +217,27 @@ class TrainConfig(DefaultTrainingConfig):
         return env
 
 
-if __name__ == "__main__":
-    # test
+def test_mouse():
+    env = UR_Platform_Env(fake_env=False, config=UREnvConfig())
+    env = SpacemouseIntervention(env)
+
+    while True:
+        action = env.action_space.sample()
+        print(f"test action: {action}")
+        obs, reward, done, truncated, info = env.step(action)
+
+
+def test_fake_Env():
 
     env = FakeFrankaEnv(config=UREnvConfig())
     obs, info = env.reset()
     print(obs.keys())
     print(f"obs['images']['wrist'].shape: {obs['images']['wrist'].shape}")
     print(f"obs['state']['tcp_pose'].shape: {obs['state']['tcp_pose'].shape}")
+
+
+if __name__ == "__main__":
+    # test
+
+    # test_fake_Env()
+    test_mouse()

@@ -373,7 +373,6 @@ if __name__ == "__main__":
     # Test action space
     # Test multiple steps
     for i in range(5):
-        time.sleep(1)
         action = env.action_space.sample()
         print(f"test action: {action}")
         obs, reward, done, truncated, info = env.step(action)
