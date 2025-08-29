@@ -1,6 +1,6 @@
 from typing import OrderedDict
 import cv2
-from franka_env.utils.rotations import euler_2_quat
+from franka_env.utils.rotations import euler_2_quat, quat_2_euler
 from franka_env.envs.franka_env import DefaultEnvConfig
 import numpy as np
 import requests
@@ -8,11 +8,45 @@ import copy
 import gymnasium as gym
 import time
 from typing import Dict
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation, Slerp
 import sys
 
 sys.path.append("/home/robot/code/debug_UR_Robot_Arm_Show/tools")
 from zmq_tools import ZMQClient
+
+
+def pose_linspace(start_pose, goal_pose, steps):
+    """
+    插值位姿 (位置 + 四元数旋转)
+
+    参数:
+    - start_pose: np.ndarray, shape=(7,) [x, y, z, qx, qy, qz, qw]
+    - goal_pose: np.ndarray, shape=(7,) 同上
+    - steps: int, 插值的步数
+
+    返回:
+    - poses: np.ndarray, shape=(steps, 7)
+    """
+
+    start_pose = np.asarray(start_pose, dtype=float)
+    goal_pose = np.asarray(goal_pose, dtype=float)
+
+    # 1. 插值位置 (线性)
+    xyz = np.linspace(start_pose[:3], goal_pose[:3], steps)
+
+    # 2. 插值姿态 (四元数 -> SLERP)
+    q1 = Rotation.from_quat(start_pose[3:])  # [x, y, z, w]
+    q2 = Rotation.from_quat(goal_pose[3:])
+    key_times = [0, 1]
+    key_rots = Rotation.from_quat([q1.as_quat(), q2.as_quat()])
+    slerp = Slerp(key_times, key_rots)
+
+    times = np.linspace(0, 1, steps)
+    quats = slerp(times).as_quat()
+
+    # 3. 拼接结果
+    poses = np.hstack([xyz, quats])
+    return poses
 
 
 class UR_Platform_Env(gym.Env):
@@ -191,7 +225,8 @@ class UR_Platform_Env(gym.Env):
             goal = np.concatenate([goal[:3], euler_2_quat(goal[3:])])
         steps = int(timeout * self.hz)
         self._update_currpos()
-        path = np.linspace(self.currpos, goal, steps)
+
+        path = pose_linspace(self.currpos, goal, steps)
         for p in path:
             self._send_pos_command(p)
             time.sleep(1 / self.hz)
@@ -266,10 +301,10 @@ class UR_Platform_Env(gym.Env):
 
     def _send_pos_command(self, pos: np.ndarray):
         """Internal function to send position command to the robot."""
+        print(f"_send_pos_command {pos}")
         self._recover()
         arr = np.array(pos).astype(np.float32)
         data = {"type": "pose", "arr": arr.tolist()}
-        # requests.post(self.url + "pose", json=data)
         self.client.post(data)
 
     def _send_gripper_command(self, pos: float, mode="binary"):
@@ -277,7 +312,7 @@ class UR_Platform_Env(gym.Env):
         if mode == "binary":
             if (
                 (pos <= -0.5)
-                and (self.curr_gripper_pos > 0.85)
+                and (self.currgripper > 0.85)
                 and (time.time() - self.last_gripper_act > self.gripper_sleep)
             ):  # close gripper
                 # requests.post(self.url + "close_gripper")
@@ -286,7 +321,7 @@ class UR_Platform_Env(gym.Env):
                 time.sleep(self.gripper_sleep)
             elif (
                 (pos >= 0.5)
-                and (self.curr_gripper_pos < 0.85)
+                and (self.currgripper < 0.85)
                 and (time.time() - self.last_gripper_act > self.gripper_sleep)
             ):  # open gripper
                 # requests.post(self.url + "open_gripper")
@@ -323,11 +358,29 @@ class UR_Platform_Env(gym.Env):
 
 
 if __name__ == "__main__":
+
     # test
-    sys.path.append("/home/robot/code/hil-serl")
     sys.path.append("/home/robot/code/hil-serl/examples")
-    from examples.experiments.usb_pickup_insertion.config import UREnvConfig
+    from experiments.usb_pickup_insertion.config import UREnvConfig
 
     env = UR_Platform_Env(config=UREnvConfig())
+
     obs, info = env.reset()
-    print("Initial Observation:", obs)
+    print(obs.keys())
+    print(f"obs['images']['wrist'].shape: {obs['images']['wrist'].shape}")
+    print(f"obs['state']['tcp_pose'].shape: {obs['state']['tcp_pose'].shape}")
+
+    # Test action space
+    # Test multiple steps
+    for i in range(5):
+        time.sleep(1)
+        action = env.action_space.sample()
+        print(f"test action: {action}")
+        obs, reward, done, truncated, info = env.step(action)
+
+        print("✓ Step function works")
+        print(f"  Reward: {reward}")
+        print(f"  Done: {done}")
+        print(f"  Info: {info}")
+        if done:
+            obs, info = env.reset()

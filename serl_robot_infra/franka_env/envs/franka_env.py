@@ -522,3 +522,456 @@ class FrankaEnv(gym.Env):
             self.img_queue.put(None)
             cv2.destroyAllWindows()
             self.displayer.join()
+
+
+##############################################################################
+
+
+class FakeFrankaEnv(gym.Env):
+    """
+    Fake Franka environment that simulates hardware interactions without actual hardware.
+    Provides the same interface and data shapes as FrankaEnv but with simulated data.
+    """
+
+    def __init__(
+        self,
+        hz=10,
+        fake_env=True,  # Always true for fake env
+        save_video=False,
+        config: DefaultEnvConfig = None,
+        set_load=False,
+    ):
+        self.action_scale = config.ACTION_SCALE
+        self._TARGET_POSE = config.TARGET_POSE
+        self._RESET_POSE = config.RESET_POSE
+        self._REWARD_THRESHOLD = config.REWARD_THRESHOLD
+        self.url = config.SERVER_URL
+        self.config = config
+        self.max_episode_length = config.MAX_EPISODE_LENGTH
+        self.display_image = config.DISPLAY_IMAGE
+        self.gripper_sleep = config.GRIPPER_SLEEP
+
+        # convert last 3 elements from euler to quat, from size (6,) to (7,)
+        self.resetpos = np.concatenate(
+            [config.RESET_POSE[:3], euler_2_quat(config.RESET_POSE[3:])]
+        )
+
+        # Initialize fake robot state
+        self.currpos = self.resetpos.copy()
+        self.currvel = np.zeros(6)
+        self.currforce = np.zeros(3)
+        self.currtorque = np.zeros(3)
+        self.currjacobian = np.eye(6, 7)  # 6x7 jacobian matrix
+        self.q = np.zeros(7)  # joint positions
+        self.dq = np.zeros(7)  # joint velocities
+        self.curr_gripper_pos = np.array([0.5])  # gripper position
+        self.nextpos = self.currpos.copy()
+
+        self.last_gripper_act = time.time()
+        self.lastsent = time.time()
+        self.randomreset = config.RANDOM_RESET
+        self.random_xy_range = config.RANDOM_XY_RANGE
+        self.random_rz_range = config.RANDOM_RZ_RANGE
+        self.hz = hz
+        self.joint_reset_cycle = config.JOINT_RESET_PERIOD
+
+        self.save_video = save_video
+        if self.save_video:
+            print("Saving videos!")
+            self.recording_frames = []
+
+        # boundary box
+        self.xyz_bounding_box = gym.spaces.Box(
+            config.ABS_POSE_LIMIT_LOW[:3],
+            config.ABS_POSE_LIMIT_HIGH[:3],
+            dtype=np.float64,
+        )
+        self.rpy_bounding_box = gym.spaces.Box(
+            config.ABS_POSE_LIMIT_LOW[3:],
+            config.ABS_POSE_LIMIT_HIGH[3:],
+            dtype=np.float64,
+        )
+
+        # Action/Observation Space
+        self.action_space = gym.spaces.Box(
+            np.ones((7,), dtype=np.float32) * -1,
+            np.ones((7,), dtype=np.float32),
+        )
+
+        self.observation_space = gym.spaces.Dict(
+            {
+                "state": gym.spaces.Dict(
+                    {
+                        "tcp_pose": gym.spaces.Box(
+                            -np.inf, np.inf, shape=(7,)
+                        ),  # xyz + quat
+                        "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
+                        "gripper_pose": gym.spaces.Box(-1, 1, shape=(1,)),
+                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                    }
+                ),
+                "images": gym.spaces.Dict(
+                    {
+                        key: gym.spaces.Box(0, 255, shape=(128, 128, 3), dtype=np.uint8)
+                        for key in config.REALSENSE_CAMERAS
+                    }
+                ),
+            }
+        )
+        self.cycle_count = 0
+
+        # Initialize fake cameras
+        self.cap = None
+        self.init_fake_cameras(config.REALSENSE_CAMERAS)
+
+        if self.display_image:
+            self.img_queue = queue.Queue()
+            self.displayer = ImageDisplayer(self.img_queue, self.url)
+            self.displayer.start()
+
+        # No actual hardware setup needed for fake env
+        self.terminate = False
+        print("Initialized Fake Franka")
+
+    def clip_safety_box(self, pose: np.ndarray) -> np.ndarray:
+        """Clip the pose to be within the safety box."""
+        pose[:3] = np.clip(
+            pose[:3], self.xyz_bounding_box.low, self.xyz_bounding_box.high
+        )
+        euler = Rotation.from_quat(pose[3:]).as_euler("xyz")
+
+        # Clip first euler angle separately due to discontinuity from pi to -pi
+        sign = np.sign(euler[0])
+        euler[0] = sign * (
+            np.clip(
+                np.abs(euler[0]),
+                self.rpy_bounding_box.low[0],
+                self.rpy_bounding_box.high[0],
+            )
+        )
+
+        euler[1:] = np.clip(
+            euler[1:], self.rpy_bounding_box.low[1:], self.rpy_bounding_box.high[1:]
+        )
+        pose[3:] = Rotation.from_euler("xyz", euler).as_quat()
+
+        return pose
+
+    def step(self, action: np.ndarray) -> tuple:
+        """standard gym step function."""
+        start_time = time.time()
+        action = np.clip(action, self.action_space.low, self.action_space.high)
+        xyz_delta = action[:3]
+
+        self.nextpos = self.currpos.copy()
+        self.nextpos[:3] = self.nextpos[:3] + xyz_delta * self.action_scale[0]
+
+        # GET ORIENTATION FROM ACTION
+        self.nextpos[3:] = (
+            Rotation.from_euler("xyz", action[3:6] * self.action_scale[1])
+            * Rotation.from_quat(self.currpos[3:])
+        ).as_quat()
+
+        gripper_action = action[6] * self.action_scale[2]
+
+        self._send_gripper_command(gripper_action)
+        self._send_pos_command(self.clip_safety_box(self.nextpos))
+
+        self.curr_path_length += 1
+        dt = time.time() - start_time
+        time.sleep(max(0, (1.0 / self.hz) - dt))
+
+        self._update_currpos()
+        ob = self._get_obs()
+        reward = self.compute_reward(ob)
+        done = (
+            self.curr_path_length >= self.max_episode_length or reward or self.terminate
+        )
+        return ob, int(reward), done, False, {"succeed": reward}
+
+    def compute_reward(self, obs) -> bool:
+        current_pose = obs["state"]["tcp_pose"]
+        # convert from quat to euler first
+        current_rot = Rotation.from_quat(current_pose[3:]).as_matrix()
+        target_rot = Rotation.from_euler("xyz", self._TARGET_POSE[3:]).as_matrix()
+        diff_rot = current_rot.T @ target_rot
+        diff_euler = Rotation.from_matrix(diff_rot).as_euler("xyz")
+        delta = np.abs(
+            np.hstack([current_pose[:3] - self._TARGET_POSE[:3], diff_euler])
+        )
+        if np.all(delta < self._REWARD_THRESHOLD):
+            return True
+        else:
+            return False
+
+    def get_im(self) -> Dict[str, np.ndarray]:
+        """Get fake images with correct shapes."""
+        images = {}
+        display_images = {}
+        full_res_images = {}
+
+        for key in self.config.REALSENSE_CAMERAS.keys():
+            # Generate fake RGB image data
+            fake_image = np.random.randint(0, 255, (128, 128, 3), dtype=np.uint8)
+
+            # Add some structure to make it more realistic
+            # Create a simple pattern with some noise
+            center_x, center_y = 64, 64
+            y, x = np.ogrid[:128, :128]
+            mask = (x - center_x) ** 2 + (y - center_y) ** 2 < 40**2
+            fake_image[mask] = [100, 150, 200]  # bluish circle in center
+
+            # Add some noise
+            noise = np.random.randint(-20, 20, (128, 128, 3))
+            fake_image = np.clip(fake_image.astype(np.int16) + noise, 0, 255).astype(
+                np.uint8
+            )
+
+            images[key] = fake_image
+            display_images[key] = fake_image
+
+            # For full resolution, create a larger image
+            full_res_fake = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            full_res_fake[200:280, 280:360] = [100, 150, 200]  # similar pattern
+            display_images[key + "_full"] = full_res_fake
+            full_res_images[key] = full_res_fake.copy()
+
+        # Store full resolution cropped images separately
+        if self.save_video:
+            self.recording_frames.append(full_res_images)
+
+        if self.display_image:
+            self.img_queue.put(display_images)
+        return images
+
+    def interpolate_move(self, goal: np.ndarray, timeout: float):
+        """Move the robot to the goal position with linear interpolation."""
+        if goal.shape == (6,):
+            goal = np.concatenate([goal[:3], euler_2_quat(goal[3:])])
+        steps = int(timeout * self.hz)
+        self._update_currpos()
+        path = np.linspace(self.currpos, goal, steps)
+        for p in path:
+            self._send_pos_command(p)
+            time.sleep(1 / self.hz)
+        self.nextpos = p
+        self._update_currpos()
+
+    def go_to_reset(self, joint_reset=False):
+        """Fake reset procedure."""
+        self._update_currpos()
+        self._send_pos_command(self.currpos)
+        time.sleep(0.3)
+        # Fake parameter updates
+        time.sleep(0.5)
+
+        if joint_reset:
+            print("JOINT RESET (FAKE)")
+            time.sleep(0.5)
+
+        # Perform Cartesian reset
+        if self.randomreset:
+            reset_pose = self.resetpos.copy()
+            reset_pose[:2] += np.random.uniform(
+                -self.random_xy_range, self.random_xy_range, (2,)
+            )
+            euler_random = self._RESET_POSE[3:].copy()
+            euler_random[-1] += np.random.uniform(
+                -self.random_rz_range, self.random_rz_range
+            )
+            reset_pose[3:] = euler_2_quat(euler_random)
+            self.interpolate_move(reset_pose, timeout=1)
+        else:
+            reset_pose = self.resetpos.copy()
+            self.interpolate_move(reset_pose, timeout=1)
+
+    def reset(self, joint_reset=False, **kwargs):
+        self.last_gripper_act = time.time()
+        if self.save_video:
+            self.save_video_recording()
+
+        self.cycle_count += 1
+        if (
+            self.joint_reset_cycle != 0
+            and self.cycle_count % self.joint_reset_cycle == 0
+        ):
+            self.cycle_count = 0
+            joint_reset = True
+
+        self._recover()
+        self.go_to_reset(joint_reset=joint_reset)
+        self._recover()
+        self.curr_path_length = 0
+
+        self._update_currpos()
+        obs = self._get_obs()
+        self.terminate = False
+        return obs, {"succeed": False}
+
+    def save_video_recording(self):
+        """Save video recording with fake frames."""
+        try:
+            if len(self.recording_frames):
+                if not os.path.exists("./videos"):
+                    os.makedirs("./videos")
+
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+                for camera_key in self.recording_frames[0].keys():
+                    if self.url == "http://127.0.0.1:5000/":
+                        video_path = f"./videos/fake_left_{camera_key}_{timestamp}.mp4"
+                    else:
+                        video_path = f"./videos/fake_right_{camera_key}_{timestamp}.mp4"
+
+                    first_frame = self.recording_frames[0][camera_key]
+                    height, width = first_frame.shape[:2]
+
+                    video_writer = cv2.VideoWriter(
+                        video_path,
+                        cv2.VideoWriter_fourcc(*"mp4v"),
+                        10,
+                        (width, height),
+                    )
+
+                    for frame_dict in self.recording_frames:
+                        video_writer.write(frame_dict[camera_key])
+
+                    video_writer.release()
+                    print(f"Saved fake video for camera {camera_key} at {video_path}")
+
+            self.recording_frames.clear()
+        except Exception as e:
+            print(f"Failed to save fake video: {e}")
+
+    def init_fake_cameras(self, name_serial_dict=None):
+        """Initialize fake cameras."""
+        if self.cap is not None:
+            self.close_cameras()
+
+        self.cap = OrderedDict()
+        for cam_name in name_serial_dict.keys():
+            # Create a fake camera object
+            self.cap[cam_name] = FakeCamera(cam_name)
+
+    def close_cameras(self):
+        """Close fake cameras."""
+        try:
+            if self.cap:
+                for cap in self.cap.values():
+                    cap.close()
+        except Exception as e:
+            print(f"Failed to close fake cameras: {e}")
+
+    def _recover(self):
+        """Fake recovery function."""
+        pass  # No actual recovery needed
+
+    def _send_pos_command(self, pos: np.ndarray):
+        """Fake position command."""
+        self._recover()
+        # Update current position to simulate robot movement
+        # Add some smoothing/damping
+        alpha = 0.8  # smoothing factor
+        self.currpos = alpha * self.currpos + (1 - alpha) * pos
+
+        # Add small random noise to simulate real robot behavior
+        noise = np.random.normal(0, 0.001, self.currpos.shape)
+        self.currpos += noise
+
+    def _send_gripper_command(self, pos: float, mode="binary"):
+        """Fake gripper command."""
+        if mode == "binary":
+            if (
+                (pos <= -0.5)
+                and (self.curr_gripper_pos > 0.85)
+                and (time.time() - self.last_gripper_act > self.gripper_sleep)
+            ):  # close gripper
+                self.curr_gripper_pos = np.array([0.1])  # closed
+                self.last_gripper_act = time.time()
+                time.sleep(self.gripper_sleep)
+            elif (
+                (pos >= 0.5)
+                and (self.curr_gripper_pos < 0.85)
+                and (time.time() - self.last_gripper_act > self.gripper_sleep)
+            ):  # open gripper
+                self.curr_gripper_pos = np.array([0.9])  # open
+                self.last_gripper_act = time.time()
+                time.sleep(self.gripper_sleep)
+            else:
+                return
+        elif mode == "continuous":
+            raise NotImplementedError("Continuous gripper control is optional")
+
+    def _update_currpos(self):
+        """Fake state update."""
+        # Generate fake but realistic robot state
+        # Add small variations to simulate sensor noise
+        noise_scale = 0.001
+
+        # Velocity is derivative of position (simplified)
+        self.currvel = np.random.normal(0, 0.01, 6)
+
+        # Force and torque with some noise
+        self.currforce = np.random.normal(0, 0.5, 3)
+        self.currtorque = np.random.normal(0, 0.1, 3)
+
+        # Jacobian matrix (6x7) - simplified
+        self.currjacobian = np.random.normal(0, 0.1, (6, 7)) + np.eye(6, 7)
+
+        # Joint positions and velocities
+        self.q = np.random.normal(0, 0.1, 7)
+        self.dq = np.random.normal(0, 0.01, 7)
+
+    def update_currpos(self):
+        """Public version of _update_currpos."""
+        self._update_currpos()
+
+    def _get_obs(self) -> dict:
+        images = self.get_im()
+        state_observation = {
+            "tcp_pose": self.currpos,
+            "tcp_vel": self.currvel,
+            "gripper_pose": self.curr_gripper_pos,
+            "tcp_force": self.currforce,
+            "tcp_torque": self.currtorque,
+        }
+        return copy.deepcopy(dict(images=images, state=state_observation))
+
+    def close(self):
+        self.close_cameras()
+        if self.display_image:
+            self.img_queue.put(None)
+            cv2.destroyAllWindows()
+            self.displayer.join()
+
+
+class FakeCamera:
+    """Fake camera that generates synthetic images."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def read(self):
+        """Return a fake image."""
+        # Generate a random RGB image that matches expected camera output
+        fake_image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+
+        # Add some structure to make it look more like a real camera feed
+        # Add a gradient background
+        y, x = np.ogrid[:480, :640]
+        gradient = (x + y) / (480 + 640) * 255
+        fake_image[:, :, 0] = gradient.astype(np.uint8)
+
+        # Add some random shapes
+        center_x, center_y = np.random.randint(100, 540), np.random.randint(100, 380)
+        radius = np.random.randint(20, 60)
+        mask = (x - center_x) ** 2 + (y - center_y) ** 2 < radius**2
+        color = np.random.randint(0, 255, 3)
+        fake_image[mask] = color
+
+        return fake_image
+
+    def close(self):
+        """Close fake camera."""
+        pass
