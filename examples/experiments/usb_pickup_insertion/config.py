@@ -15,7 +15,11 @@ from serl_launcher.wrappers.serl_obs_wrappers import SERLObsWrapper
 from serl_launcher.wrappers.chunking import ChunkingWrapper
 from serl_launcher.networks.reward_classifier import load_classifier_func
 
+sys.path.append(os.getcwd())
+from tools import print_dict_structure
+
 sys.path.append("/home/robot/code/hil-serl/examples")
+
 from experiments.config import DefaultTrainingConfig
 from experiments.usb_pickup_insertion.wrapper import USBEnv, GripperPenaltyWrapper
 from experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
@@ -238,14 +242,25 @@ def test_fake_Env():
     env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
     env = GripperPenaltyWrapper(env, penalty=-0.02)
 
+    print("==== observation_space ====")
+    print_dict_structure(env.observation_space)
+
+    print("==== action_space ====")
+    print(env.action_space)
+
+    print("==== reset ====")
+
     obs, info = env.reset()
     print(obs.keys())
-    print(f"obs['images']['wrist'].shape: {obs['images']['wrist'].shape}")
-    print(f"obs['state']['tcp_pose'].shape: {obs['state']['tcp_pose'].shape}")
+    print_dict_structure(obs)
+    # print(f"obs['images']['wrist'].shape: {obs['images']['wrist'].shape}")
+    # print(f"obs['state']['tcp_pose'].shape: {obs['state']['tcp_pose'].shape}")
 
+    print("==== step ====")
     obs, reward, done, truncated, info = env.step(env.action_space.sample())
 
     print(obs.keys())
+    print_dict_structure(obs)
 
 
 if __name__ == "__main__":

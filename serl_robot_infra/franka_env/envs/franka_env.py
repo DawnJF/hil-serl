@@ -557,13 +557,11 @@ class FakeFrankaEnv(gym.Env):
         )
 
         # Initialize fake robot state
-        self.currpos = self.resetpos.copy()
+        self.currpos = np.zeros(7)
         self.currvel = np.zeros(6)
         self.currforce = np.zeros(3)
         self.currtorque = np.zeros(3)
-        self.currjacobian = np.eye(6, 7)  # 6x7 jacobian matrix
-        self.q = np.zeros(7)  # joint positions
-        self.dq = np.zeros(7)  # joint velocities
+
         self.curr_gripper_pos = np.array([0.5])  # gripper position
         self.nextpos = self.currpos.copy()
 
@@ -910,18 +908,14 @@ class FakeFrankaEnv(gym.Env):
         noise_scale = 0.001
 
         # Velocity is derivative of position (simplified)
+        self.currpos = np.random.normal(self.currpos, noise_scale)
         self.currvel = np.random.normal(0, 0.01, 6)
 
         # Force and torque with some noise
         self.currforce = np.random.normal(0, 0.5, 3)
         self.currtorque = np.random.normal(0, 0.1, 3)
 
-        # Jacobian matrix (6x7) - simplified
-        self.currjacobian = np.random.normal(0, 0.1, (6, 7)) + np.eye(6, 7)
-
-        # Joint positions and velocities
-        self.q = np.random.normal(0, 0.1, 7)
-        self.dq = np.random.normal(0, 0.01, 7)
+        self.curr_gripper_pos = np.random.normal(0.9, 0.1, 1)
 
     def update_currpos(self):
         """Public version of _update_currpos."""
