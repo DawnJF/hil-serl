@@ -229,15 +229,27 @@ def test_mouse():
 
 def test_fake_Env():
 
-    env = FakeFrankaEnv(config=UREnvConfig())
+    proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
+
+    env = FakeFrankaEnv(config=EnvConfig())
+    env = RelativeFrame(env)
+    env = Quat2EulerWrapper(env)
+    env = SERLObsWrapper(env, proprio_keys=proprio_keys)
+    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+    env = GripperPenaltyWrapper(env, penalty=-0.02)
+
     obs, info = env.reset()
     print(obs.keys())
     print(f"obs['images']['wrist'].shape: {obs['images']['wrist'].shape}")
     print(f"obs['state']['tcp_pose'].shape: {obs['state']['tcp_pose'].shape}")
 
+    obs, reward, done, truncated, info = env.step(env.action_space.sample())
+
+    print(obs.keys())
+
 
 if __name__ == "__main__":
     # test
 
-    # test_fake_Env()
-    test_mouse()
+    test_fake_Env()
+    # test_mouse()

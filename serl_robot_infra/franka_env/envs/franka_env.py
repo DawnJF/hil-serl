@@ -548,7 +548,7 @@ class FakeFrankaEnv(gym.Env):
         self.url = config.SERVER_URL
         self.config = config
         self.max_episode_length = config.MAX_EPISODE_LENGTH
-        self.display_image = config.DISPLAY_IMAGE
+        self.display_image = False
         self.gripper_sleep = config.GRIPPER_SLEEP
 
         # convert last 3 elements from euler to quat, from size (6,) to (7,)
