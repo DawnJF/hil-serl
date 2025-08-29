@@ -6,12 +6,17 @@ import pickle as pkl
 import datetime
 from absl import app, flags
 import time
+import jax
 
 from experiments.mappings import CONFIG_MAPPING
 
+if not hasattr(jax, "tree_map"):
+    jax.tree_map = jax.tree.map
+
+
 FLAGS = flags.FLAGS
 flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
-flags.DEFINE_integer("successes_needed", 20, "Number of successful demos to collect.")
+flags.DEFINE_integer("successes_needed", 4, "Number of successful demos to collect.")
 
 def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, 'Experiment folder not found.'

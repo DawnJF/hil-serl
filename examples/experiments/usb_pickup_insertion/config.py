@@ -17,9 +17,9 @@ from serl_launcher.wrappers.chunking import ChunkingWrapper
 from serl_launcher.networks.reward_classifier import load_classifier_func
 
 sys.path.append(os.getcwd())
-from tools import print_dict_structure
-
+sys.path.append("/home/robot/code/hil-serl")
 sys.path.append("/home/robot/code/hil-serl/examples")
+from tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
 from experiments.usb_pickup_insertion.wrapper import USBEnv, GripperPenaltyWrapper
@@ -185,9 +185,10 @@ class UREnvConfig(DefaultEnvConfig):
 
 
 class TrainConfig(DefaultTrainingConfig):
-    image_keys = ["side_policy", "wrist_1", "wrist_2"]
+    image_keys = ["wrist", "rgb"]
     classifier_keys = ["side_classifier"]
-    proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
+    # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
+    proprio_keys = ["tcp_pose", "gripper_pose"]
     checkpoint_period = 2000
     cta_ratio = 2
     random_steps = 0
@@ -205,19 +206,19 @@ class TrainConfig(DefaultTrainingConfig):
         env = Quat2EulerWrapper(env)
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
-        if classifier:
-            classifier = load_classifier_func(
-                key=jax.random.PRNGKey(0),
-                sample=env.observation_space.sample(),
-                image_keys=self.classifier_keys,
-                checkpoint_path=os.path.abspath("classifier_ckpt/"),
-            )
+        # if classifier:
+        #     classifier = load_classifier_func(
+        #         key=jax.random.PRNGKey(0),
+        #         sample=env.observation_space.sample(),
+        #         image_keys=self.classifier_keys,
+        #         checkpoint_path=os.path.abspath("classifier_ckpt/"),
+        #     )
 
-            def reward_func(obs):
-                sigmoid = lambda x: 1 / (1 + jnp.exp(-x))
-                return int(sigmoid(classifier(obs)) > 0.7 and obs["state"][0, 0] > 0.4)
+        #     def reward_func(obs):
+        #         sigmoid = lambda x: 1 / (1 + jnp.exp(-x))
+        #         return int(sigmoid(classifier(obs)) > 0.7 and obs["state"][0, 0] > 0.4)
 
-            env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
+        #     env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
         env = GripperPenaltyWrapper(env, penalty=-0.02)
         return env
 

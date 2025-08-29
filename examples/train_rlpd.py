@@ -3,6 +3,8 @@
 import glob
 import time
 import jax
+if not hasattr(jax, "tree_map"):
+    jax.tree_map = jax.tree.map
 import jax.numpy as jnp
 import numpy as np
 import tqdm

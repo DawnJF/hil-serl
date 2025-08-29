@@ -126,6 +126,7 @@ class UR_Platform_Env(gym.Env):
             return
 
         self.cap = None
+        self.reward = 0
 
         # if not fake_env:
         # from pynput import keyboard
@@ -196,7 +197,7 @@ class UR_Platform_Env(gym.Env):
 
         self._update_currpos()
         ob = self._get_obs()
-        reward = 0
+        reward = self.reward
         done = (
             self.curr_path_length >= self.max_episode_length or reward or self.terminate
         )
@@ -352,6 +353,7 @@ class UR_Platform_Env(gym.Env):
         self.currgripper = np.array(ps["gripper"])
 
         self.cap = ps["obs"]
+        self.reward = ps["obs"]["reward"]
 
     def _get_obs(self) -> dict:
         images = self.get_im()
