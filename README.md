@@ -23,6 +23,20 @@ HIL-SERL provides a set of libraries, env wrappers, and examples to train RL pol
   - [Citation](#citation)
 
 ## Installation
+```bash
+conda create -n hilserl python=3.10
+
+cd serl_launcher
+pip install -e .
+pip install -r requirements.txt
+
+cd serl_robot_infra
+pip install -e .
+
+pip install jax==0.4.13 flax==0.7.0
+pip install --upgrade "jax[cuda12_pip]==0.4.13" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+```
+
 1. **Setup Conda Environment:**
     create an environment with
     ```bash

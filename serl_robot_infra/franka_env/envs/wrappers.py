@@ -12,10 +12,11 @@ from typing import List
 
 sigmoid = lambda x: 1 / (1 + np.exp(-x))
 
+
 class HumanClassifierWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
-    
+
     def step(self, action):
         obs, rew, done, truncated, info = self.env.step(action)
         if done:
@@ -26,20 +27,21 @@ class HumanClassifierWrapper(gym.Wrapper):
                     break
                 except:
                     continue
-        info['succeed'] = rew
+        info["succeed"] = rew
         return obs, rew, done, truncated, info
-    
+
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         return obs, info
-    
+
+
 class MultiCameraBinaryRewardClassifierWrapper(gym.Wrapper):
     """
     This wrapper uses the camera images to compute the reward,
     which is not part of the observation space
     """
 
-    def __init__(self, env: Env, reward_classifier_func, target_hz = None):
+    def __init__(self, env: Env, reward_classifier_func, target_hz=None):
         super().__init__(env)
         self.reward_classifier_func = reward_classifier_func
         self.target_hz = target_hz
@@ -54,24 +56,24 @@ class MultiCameraBinaryRewardClassifierWrapper(gym.Wrapper):
         obs, rew, done, truncated, info = self.env.step(action)
         rew = self.compute_reward(obs)
         done = done or rew
-        info['succeed'] = bool(rew)
+        info["succeed"] = bool(rew)
         if self.target_hz is not None:
-            time.sleep(max(0, 1/self.target_hz - (time.time() - start_time)))
-            
+            time.sleep(max(0, 1 / self.target_hz - (time.time() - start_time)))
+
         return obs, rew, done, truncated, info
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        info['succeed'] = False
+        info["succeed"] = False
         return obs, info
-    
-    
+
+
 class MultiStageBinaryRewardClassifierWrapper(gym.Wrapper):
     def __init__(self, env: Env, reward_classifier_func: List[callable]):
         super().__init__(env)
         self.reward_classifier_func = reward_classifier_func
         self.received = [False] * len(reward_classifier_func)
-    
+
     def compute_reward(self, obs):
         rewards = [0] * len(self.reward_classifier_func)
         for i, classifier_func in enumerate(self.reward_classifier_func):
@@ -89,14 +91,16 @@ class MultiStageBinaryRewardClassifierWrapper(gym.Wrapper):
     def step(self, action):
         obs, rew, done, truncated, info = self.env.step(action)
         rew = self.compute_reward(obs)
-        done = (done or all(self.received)) # either environment done or all rewards satisfied
-        info['succeed'] = all(self.received)
+        done = done or all(
+            self.received
+        )  # either environment done or all rewards satisfied
+        info["succeed"] = all(self.received)
         return obs, rew, done, truncated, info
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         self.received = [False] * len(self.reward_classifier_func)
-        info['succeed'] = False
+        info["succeed"] = False
         return obs, info
 
 
@@ -172,10 +176,11 @@ class DualQuat2EulerWrapper(gym.ObservationWrapper):
             (tcp_pose[:3], R.from_quat(tcp_pose[3:]).as_euler("xyz"))
         )
         return observation
-    
+
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         return self.observation(obs), info
+
 
 class GripperCloseEnv(gym.ActionWrapper):
     """
@@ -199,11 +204,11 @@ class GripperCloseEnv(gym.ActionWrapper):
         if "intervene_action" in info:
             info["intervene_action"] = info["intervene_action"][:6]
         return obs, rew, done, truncated, info
-    
+
     def reset(self, **kwargs):
         return self.env.reset(**kwargs)
 
-    
+
 class SpacemouseIntervention(gym.ActionWrapper):
     def __init__(self, env, action_indices=None):
         super().__init__(env)
@@ -226,17 +231,20 @@ class SpacemouseIntervention(gym.ActionWrapper):
         expert_a, buttons = self.expert.get_action()
         self.left, self.right = tuple(buttons)
         intervened = False
-        
+
         if np.linalg.norm(expert_a) > 0.001:
+            print("SpacemouseIntervention intervened")
             intervened = True
 
         if self.gripper_enabled:
             if self.left:  # close gripper
                 gripper_action = np.random.uniform(-1, -0.9, size=(1,))
                 intervened = True
+                print("SpacemouseIntervention close gripper")
             elif self.right:  # open gripper
                 gripper_action = np.random.uniform(0.9, 1, size=(1,))
                 intervened = True
+                print("SpacemouseIntervention open gripper")
             else:
                 gripper_action = np.zeros((1,))
             expert_a = np.concatenate((expert_a, gripper_action), axis=0)
@@ -254,6 +262,7 @@ class SpacemouseIntervention(gym.ActionWrapper):
     def step(self, action):
 
         new_action, replaced = self.action(action)
+        # print(f"DEBUG SpacemouseIntervention new_action: {new_action}")
 
         obs, rew, done, truncated, info = self.env.step(new_action)
         if replaced:
@@ -261,6 +270,7 @@ class SpacemouseIntervention(gym.ActionWrapper):
         info["left"] = self.left
         info["right"] = self.right
         return obs, rew, done, truncated, info
+
 
 class DualSpacemouseIntervention(gym.ActionWrapper):
     def __init__(self, env, action_indices=None, gripper_enabled=True):
@@ -282,7 +292,6 @@ class DualSpacemouseIntervention(gym.ActionWrapper):
         intervened = False
         expert_a, buttons = self.expert.get_action()
         self.left1, self.left2, self.right1, self.right2 = tuple(buttons)
-
 
         if self.gripper_enabled:
             if self.left1:  # close gripper
@@ -331,7 +340,7 @@ class DualSpacemouseIntervention(gym.ActionWrapper):
         info["right1"] = self.right1
         info["right2"] = self.right2
         return obs, rew, done, truncated, info
-    
+
     def reset(self, **kwargs):
         return self.env.reset(**kwargs)
 
@@ -365,29 +374,30 @@ class GripperPenaltyWrapper(gym.RewardWrapper):
         self.last_gripper_pos = observation["state"][0, 0]
         return observation, reward, terminated, truncated, info
 
+
 class DualGripperPenaltyWrapper(gym.RewardWrapper):
     def __init__(self, env, penalty=0.1):
         super().__init__(env)
         assert env.action_space.shape == (14,)
         self.penalty = penalty
-        self.last_gripper_pos_left = 0 #TODO: this assume gripper starts opened
-        self.last_gripper_pos_right = 0 #TODO: this assume gripper starts opened
-    
+        self.last_gripper_pos_left = 0  # TODO: this assume gripper starts opened
+        self.last_gripper_pos_right = 0  # TODO: this assume gripper starts opened
+
     def reward(self, reward: float, action) -> float:
-        if (action[6] < -0.5 and self.last_gripper_pos_left==0):
+        if action[6] < -0.5 and self.last_gripper_pos_left == 0:
             reward -= self.penalty
             self.last_gripper_pos_left = 1
-        elif (action[6] > 0.5 and self.last_gripper_pos_left==1):
+        elif action[6] > 0.5 and self.last_gripper_pos_left == 1:
             reward -= self.penalty
             self.last_gripper_pos_left = 0
-        if (action[13] < -0.5 and self.last_gripper_pos_right==0):
+        if action[13] < -0.5 and self.last_gripper_pos_right == 0:
             reward -= self.penalty
             self.last_gripper_pos_right = 1
-        elif (action[13] > 0.5 and self.last_gripper_pos_right==1):
+        elif action[13] > 0.5 and self.last_gripper_pos_right == 1:
             reward -= self.penalty
             self.last_gripper_pos_right = 0
         return reward
-    
+
     def step(self, action):
         """Modifies the :attr:`env` :meth:`step` reward using :meth:`self.reward`."""
         observation, reward, terminated, truncated, info = self.env.step(action)

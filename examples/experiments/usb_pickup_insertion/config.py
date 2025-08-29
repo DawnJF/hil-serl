@@ -1,4 +1,5 @@
 import os
+import time
 import jax
 import numpy as np
 import jax.numpy as jnp
@@ -125,7 +126,7 @@ class UREnvConfig(DefaultEnvConfig):
     # TARGET_POSE = np.array(
     #     [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
     # )
-    reset_xyz = np.array([-0.3, -0.45, 0.17])
+    reset_xyz = np.array([-0.35, -0.5, 0.15])
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
     RESET_POSE = np.array([*reset_xyz, *reset_euler])
     ACTION_SCALE = np.array([0.01, 0.02, 1])  # xyz, euler, gripper
@@ -138,7 +139,7 @@ class UREnvConfig(DefaultEnvConfig):
         [np.array([-0.3, -0.2, 0.35]), reset_euler + np.array([0.1, 0.1, 0.3])]
     )
     ABS_POSE_LIMIT_LOW = np.concatenate(
-        [np.array([-0.48, -0.7, 0.055]), reset_euler - np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.6, -0.6, 0.055]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
     COMPLIANCE_PARAM = {
         "translational_stiffness": 2000,
@@ -196,8 +197,8 @@ class TrainConfig(DefaultTrainingConfig):
     setup_mode = "single-arm-learned-gripper"
 
     def get_environment(self, fake_env=False, save_video=False, classifier=False):
-        env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
-        # env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
+        # env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
+        env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
         if not fake_env:
             env = SpacemouseIntervention(env)
         env = RelativeFrame(env)
@@ -225,8 +226,14 @@ def test_mouse():
     env = UR_Platform_Env(fake_env=False, config=UREnvConfig())
     env = SpacemouseIntervention(env)
 
+    print(f"action_space: {env.action_space}")
+
+    time.sleep(1)
+    env.reset()
+
     while True:
         action = env.action_space.sample()
+        action = np.zeros((7,))
         print(f"test action: {action}")
         obs, reward, done, truncated, info = env.step(action)
 
@@ -266,5 +273,5 @@ def test_fake_Env():
 if __name__ == "__main__":
     # test
 
-    test_fake_Env()
-    # test_mouse()
+    # test_fake_Env()
+    test_mouse()

@@ -1,5 +1,5 @@
 import multiprocessing
-from time import time
+import time
 import numpy as np
 from franka_env.spacemouse import pyspacemouse
 from typing import Tuple

@@ -143,9 +143,14 @@ class UR_Platform_Env(gym.Env):
 
     def clip_safety_box(self, pose: np.ndarray) -> np.ndarray:
         """Clip the pose to be within the safety box."""
+        # print(f"self.xyz_bounding_box.low: {self.xyz_bounding_box.low}")
+        # print(f"self.xyz_bounding_box.high: {self.xyz_bounding_box.high}")
+        # print(f"pose[:3]: {pose[:3]}")
+
         pose[:3] = np.clip(
             pose[:3], self.xyz_bounding_box.low, self.xyz_bounding_box.high
         )
+        # print(f"CLIP: pose[:3]: {pose[:3]}")
         euler = Rotation.from_quat(pose[3:]).as_euler("xyz")
 
         # Clip first euler angle separately due to discontinuity from pi to -pi
@@ -301,7 +306,7 @@ class UR_Platform_Env(gym.Env):
 
     def _send_pos_command(self, pos: np.ndarray):
         """Internal function to send position command to the robot."""
-        print(f"_send_pos_command {pos}")
+        # print(f"[DEBUG] _send_pos_command {pos}")
         self._recover()
         arr = np.array(pos).astype(np.float32)
         data = {"type": "pose", "arr": arr.tolist()}
@@ -309,10 +314,13 @@ class UR_Platform_Env(gym.Env):
 
     def _send_gripper_command(self, pos: float, mode="binary"):
         """Internal function to send gripper command to the robot."""
+        # print(f"[DEBUG] _send_gripper_command {pos}")
+        # print(f"[DEBUG] _send_gripper_command self.currgripper: {self.currgripper}")
         if mode == "binary":
             if (
                 (pos <= -0.5)
-                and (self.currgripper > 0.85)
+                # and (self.currgripper > 0.85)
+                and (self.currgripper <= 0.25)
                 and (time.time() - self.last_gripper_act > self.gripper_sleep)
             ):  # close gripper
                 # requests.post(self.url + "close_gripper")
@@ -321,7 +329,8 @@ class UR_Platform_Env(gym.Env):
                 time.sleep(self.gripper_sleep)
             elif (
                 (pos >= 0.5)
-                and (self.currgripper < 0.85)
+                # and (self.currgripper < 0.85)
+                and (self.currgripper > 0.25)
                 and (time.time() - self.last_gripper_act > self.gripper_sleep)
             ):  # open gripper
                 # requests.post(self.url + "open_gripper")
@@ -364,6 +373,10 @@ if __name__ == "__main__":
     from experiments.usb_pickup_insertion.config import UREnvConfig
 
     env = UR_Platform_Env(config=UREnvConfig())
+
+    env.client.post({"type": "close_gripper"})
+
+    time.sleep(2)
 
     obs, info = env.reset()
     print(obs.keys())
