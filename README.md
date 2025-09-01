@@ -15,12 +15,12 @@ HIL-SERL provides a set of libraries, env wrappers, and examples to train RL pol
 🎬: [HIL-SERL video](https://www.youtube.com/watch?v=GuD_-zhJgbs)
 
 **Table of Contents**
-- [HIL-SERL: Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning](#serl-a-software-suite-for-sample-efficient-robotic-reinforcement-learning)
+- [HIL-SERL: Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning](#hil-serl-precise-and-dexterous-robotic-manipulation-via-human-in-the-loop-reinforcement-learning)
   - [Installation](#installation)
   - [Overview and Code Structure](#overview-and-code-structure)
   - [Run with Franka Arm](#run-with-franka-arm)
-  <!-- - [Contribution](#contribution) -->
   - [Citation](#citation)
+  - [Troubleshooting](#troubleshooting)
 
 ## Installation
 ```bash
@@ -120,3 +120,6 @@ If you use this code for your research, please cite our paper:
 }
 ```
 
+## Troubleshooting
+
+1. 3d 鼠标 Failed to open device -> 权限问题
