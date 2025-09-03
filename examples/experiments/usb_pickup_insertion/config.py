@@ -120,8 +120,8 @@ class UREnvConfig(DefaultEnvConfig):
         },
     }
     IMAGE_CROP = {
-        "wrist": lambda img: img[50:-200, 200:-200],
-        "rgb": lambda img: img[:-200, 200:-200],
+        "wrist": lambda img: img[0:480, 0:640],
+        "rgb": lambda img: img[135:370, 230:730],
     }
     # TARGET_POSE = np.array(
     #     [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
@@ -129,58 +129,18 @@ class UREnvConfig(DefaultEnvConfig):
     reset_xyz = np.array([-0.35, -0.5, 0.15])
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
     RESET_POSE = np.array([*reset_xyz, *reset_euler])
-    ACTION_SCALE = np.array([0.01, 0.02, 1])  # xyz, euler, gripper
+    ACTION_SCALE = np.array([0.004, 0.02, 1])  # xyz, euler, gripper
     # RANDOM_RESET = True
     RANDOM_RESET = False
 
     RANDOM_XY_RANGE = 0.01
     RANDOM_RZ_RANGE = 0.1
     ABS_POSE_LIMIT_HIGH = np.concatenate(
-        [np.array([-0.3, -0.2, 0.35]), reset_euler + np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.3, -0.2, 0.25]), reset_euler + np.array([0.1, 0.1, 0.3])]
     )
     ABS_POSE_LIMIT_LOW = np.concatenate(
         [np.array([-0.6, -0.6, 0.055]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
-    COMPLIANCE_PARAM = {
-        "translational_stiffness": 2000,
-        "translational_damping": 89,
-        "rotational_stiffness": 150,
-        "rotational_damping": 7,
-        "translational_Ki": 0,
-        "translational_clip_x": 0.006,
-        "translational_clip_y": 0.0059,
-        "translational_clip_z": 0.0035,
-        "translational_clip_neg_x": 0.005,
-        "translational_clip_neg_y": 0.005,
-        "translational_clip_neg_z": 0.0035,
-        "rotational_clip_x": 0.02,
-        "rotational_clip_y": 0.02,
-        "rotational_clip_z": 0.015,
-        "rotational_clip_neg_x": 0.02,
-        "rotational_clip_neg_y": 0.02,
-        "rotational_clip_neg_z": 0.015,
-        "rotational_Ki": 0,
-    }
-    PRECISION_PARAM = {
-        "translational_stiffness": 2000,
-        "translational_damping": 89,
-        "rotational_stiffness": 150,
-        "rotational_damping": 7,
-        "translational_Ki": 0.0,
-        "translational_clip_x": 0.01,
-        "translational_clip_y": 0.01,
-        "translational_clip_z": 0.01,
-        "translational_clip_neg_x": 0.01,
-        "translational_clip_neg_y": 0.01,
-        "translational_clip_neg_z": 0.01,
-        "rotational_clip_x": 0.03,
-        "rotational_clip_y": 0.03,
-        "rotational_clip_z": 0.03,
-        "rotational_clip_neg_x": 0.03,
-        "rotational_clip_neg_y": 0.03,
-        "rotational_clip_neg_z": 0.03,
-        "rotational_Ki": 0.0,
-    }
     MAX_EPISODE_LENGTH = 120
 
 
@@ -189,7 +149,7 @@ class TrainConfig(DefaultTrainingConfig):
     classifier_keys = ["side_classifier"]
     # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
     proprio_keys = ["tcp_pose", "gripper_pose"]
-    checkpoint_period = 2000
+    checkpoint_period = 1000
     cta_ratio = 2
     random_steps = 0
     discount = 0.98
@@ -230,7 +190,7 @@ def test_mouse():
     print(f"action_space: {env.action_space}")
 
     time.sleep(1)
-    env.reset()
+    # env.reset()
 
     while True:
         action = env.action_space.sample()
@@ -272,6 +232,7 @@ def test_fake_Env():
 
 
 if __name__ == "__main__":
+
     # test
 
     # test_fake_Env()

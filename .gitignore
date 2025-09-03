@@ -6,3 +6,7 @@ __pycache__
 *.pyc
 wandb/
 .DS_Store
+*.pkl
+checkpoint
+checkpoint*
+draft*

@@ -23,7 +23,7 @@ class DefaultTrainingConfig:
     # "resnet" for ResNet10 from scratch and "resnet-pretrained" for frozen ResNet10 with pretrained weights
     encoder_type: str = "resnet-pretrained"
     demo_path: str = None
-    checkpoint_period: int = 0
+    checkpoint_period: int = 20
     buffer_period: int = 0
 
     eval_checkpoint_step: int = 0
