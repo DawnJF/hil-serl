@@ -20,9 +20,11 @@
             "console": "integratedTerminal",
             "args": [
                 "--exp_name=usb_pickup_insertion",
-                "--checkpoint_path=first_run",
-                "--demo_path=...",
-                "--learner"
+                // "--checkpoint_path=first_run",
+                "--demo_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl",
+                "--learner",
+                "--debug=true",
+                // "--checkpoint_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl"
             ],
             "env": {
                 "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
@@ -40,6 +42,53 @@
                 "--checkpoint_path=first_run",
                 "--actor"
             ],
+            "env": {
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".1"
+            }
+        },
+        {
+            "name": "record_demo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/record_demos.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--exp_name=usb_pickup_insertion",
+                "--successes_needed=1"
+            ],
+            "env": {
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".1"
+            }
+        },
+        {
+            "name": "usb-config",
+            "type": "debugpy",
+            "request": "launch",
+            // "python": "/usr/bin/sudo",
+            "program": "${workspaceFolder}/examples/experiments/usb_pickup_insertion/config.py",
+            "console": "integratedTerminal",
+            "env": {
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".1"
+            }
+        },
+        {
+            "name": "Python Debugger with Sudo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/usr/bin/sudo",
+            "args": [
+                "-E",  // 保留环境变量
+                "/home/robot/miniforge3/envs/roboar4il/hilserl/bin/python",
+                "${workspaceFolder}/examples/train_rlpd.py",
+                "--exp_name=usb_pickup_insertion",  // 您的脚本参数
+                "--demo_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl",
+                "--learner",
+                "--debug=true",
+            ],
+            "console": "integratedTerminal",
             "env": {
                 "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
                 "XLA_PYTHON_CLIENT_MEM_FRACTION": ".1"

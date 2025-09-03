@@ -1,4 +1,5 @@
 import os
+import sys
 from tqdm import tqdm
 import numpy as np
 import copy
@@ -16,7 +17,7 @@ if not hasattr(jax, "tree_map"):
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
-flags.DEFINE_integer("successes_needed", 4, "Number of successful demos to collect.")
+flags.DEFINE_integer("successes_needed", 30, "Number of successful demos to collect.")
 
 def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, 'Experiment folder not found.'
@@ -62,12 +63,20 @@ def main(_):
                 pbar.update(1)
             trajectory = []
             returns = 0
+            # After reset, we should suspend 5s for reposition object.
+            time.sleep(7)
             obs, info = env.reset()
             
-    if not os.path.exists("./demo_data"):
-        os.makedirs("./demo_data")
+            
+    # if not os.path.exists("./demo_data"):
+    #     os.makedirs("./demo_data")
     uuid = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    file_name = f"./demo_data/{FLAGS.exp_name}_{success_needed}_demos_{uuid}.pkl"
+    ymd = uuid.split("_")[0]
+    hms = uuid.split("_")[1]
+    file_dir = f"/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/{ymd}"
+    if not os.path.exists(file_dir):
+        os.makedirs(file_dir)
+    file_name = f"/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/{ymd}/{FLAGS.exp_name}_{success_needed}_{hms}.pkl"
     with open(file_name, "wb") as f:
         pkl.dump(transitions, f)
         print(f"saved {success_needed} demos to {file_name}")
