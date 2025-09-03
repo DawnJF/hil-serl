@@ -5,6 +5,8 @@ import time
 import jax
 if not hasattr(jax, "tree_map"):
     jax.tree_map = jax.tree.map
+if not hasattr(jax, "tree_leaves"):
+    jax.tree_leaves = jax.tree.leaves
 import jax.numpy as jnp
 import numpy as np
 import tqdm
@@ -53,6 +55,7 @@ flags.DEFINE_boolean(
     "debug", False, "Debug mode."
 )  # debug mode will disable wandb logging
 
+flags.DEFINE_string("wandb_mode", "online", "wandb mode, online or offline, if debug is true, mode is disabled.")
 
 devices = jax.local_devices()
 num_devices = len(devices)
@@ -443,6 +446,7 @@ def main(_):
             project="hil-serl",
             description=FLAGS.exp_name,
             debug=FLAGS.debug,
+            mode=FLAGS.wandb_mode,
         )
         return replay_buffer, wandb_logger
 

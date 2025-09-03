@@ -242,6 +242,7 @@ def make_wandb_logger(
     project: str = "hil-serl",
     description: str = "serl_launcher",
     debug: bool = False,
+    mode: str = "online",
 ):
     wandb_config = WandBLogger.get_default_config()
     wandb_config.update(
@@ -249,6 +250,7 @@ def make_wandb_logger(
             "project": project,
             "exp_descriptor": description,
             "tag": description,
+            "mode": mode
         }
     )
     wandb_logger = WandBLogger(
