@@ -16,14 +16,17 @@ if not hasattr(jax, "tree_map"):
 
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
+flags.DEFINE_string(
+    "exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder."
+)
 flags.DEFINE_integer("successes_needed", 30, "Number of successful demos to collect.")
 
+
 def main(_):
-    assert FLAGS.exp_name in CONFIG_MAPPING, 'Experiment folder not found.'
+    assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     config = CONFIG_MAPPING[FLAGS.exp_name]()
     env = config.get_environment(fake_env=False, save_video=False, classifier=True)
-    
+
     obs, info = env.reset()
     print("Reset done")
     transitions = []
@@ -32,13 +35,25 @@ def main(_):
     pbar = tqdm(total=success_needed)
     trajectory = []
     returns = 0
-    
+
     while success_count < success_needed:
-        actions = np.zeros(env.action_space.sample().shape) 
+        actions = np.zeros(env.action_space.sample().shape)
         next_obs, rew, done, truncated, info = env.step(actions)
         returns += rew
         if "intervene_action" in info:
             actions = info["intervene_action"]
+
+        if (
+            not done
+            and not rew
+            and actions[0] == 0
+            and actions[1] == 0
+            and actions[2] == 0
+            and actions[3] == 0
+        ):
+            print("Note: not moving!")
+            continue
+
         transition = copy.deepcopy(
             dict(
                 observations=obs,
@@ -51,7 +66,7 @@ def main(_):
             )
         )
         trajectory.append(transition)
-        
+
         pbar.set_description(f"Return: {returns}")
 
         obs = next_obs
@@ -64,10 +79,9 @@ def main(_):
             trajectory = []
             returns = 0
             # After reset, we should suspend 5s for reposition object.
-            time.sleep(7)
+            time.sleep(4)
             obs, info = env.reset()
-            
-            
+
     # if not os.path.exists("./demo_data"):
     #     os.makedirs("./demo_data")
     uuid = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -80,6 +94,7 @@ def main(_):
     with open(file_name, "wb") as f:
         pkl.dump(transitions, f)
         print(f"saved {success_needed} demos to {file_name}")
+
 
 if __name__ == "__main__":
     app.run(main)
