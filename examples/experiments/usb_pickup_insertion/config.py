@@ -129,7 +129,7 @@ class UREnvConfig(DefaultEnvConfig):
     reset_xyz = np.array([-0.35, -0.5, 0.15])
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
     RESET_POSE = np.array([*reset_xyz, *reset_euler])
-    ACTION_SCALE = np.array([0.004, 0.02, 1])  # xyz, euler, gripper
+    ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
     # RANDOM_RESET = True
     RANDOM_RESET = False
 
@@ -141,7 +141,7 @@ class UREnvConfig(DefaultEnvConfig):
     ABS_POSE_LIMIT_LOW = np.concatenate(
         [np.array([-0.6, -0.6, 0.055]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
-    MAX_EPISODE_LENGTH = 120
+    MAX_EPISODE_LENGTH = 200
 
 
 class TrainConfig(DefaultTrainingConfig):
@@ -162,7 +162,7 @@ class TrainConfig(DefaultTrainingConfig):
         env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
         if not fake_env:
             env = SpacemouseIntervention(env)
-        env = RelativeFrame(env)
+        env = RelativeFrame(env, include_relative_pose=False)
         env = Quat2EulerWrapper(env)
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)

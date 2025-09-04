@@ -23,9 +23,7 @@ class USBEnv(FrankaEnv):
             if cam_name == "side_classifier":
                 self.cap["side_classifier"] = self.cap["side_policy"]
             else:
-                cap = VideoCapture(
-                    RSCapture(name=cam_name, **kwargs)
-                )
+                cap = VideoCapture(RSCapture(name=cam_name, **kwargs))
                 self.cap[cam_name] = cap
 
     def reset(self, **kwargs):
@@ -106,6 +104,11 @@ class GripperPenaltyWrapper(gym.Wrapper):
         self.penalty = penalty
         self.last_gripper_pos = None
 
+        self.action_space = gym.spaces.Box(
+            np.ones((4,), dtype=np.float32) * -1,
+            np.ones((4,), dtype=np.float32),
+        )
+
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         self.last_gripper_pos = obs["state"][0, 0]
@@ -113,9 +116,16 @@ class GripperPenaltyWrapper(gym.Wrapper):
 
     def step(self, action):
         """Modifies the :attr:`env` :meth:`step` reward using :meth:`self.reward`."""
+        if len(action) == 4:
+            action = [*action[:3], *[0.0, 0.0, 0.0], *action[-1:]]
+
         observation, reward, terminated, truncated, info = self.env.step(action)
+        if len(action) == 7:
+            action = [*action[:3], *action[-1:]]
         if "intervene_action" in info:
             action = info["intervene_action"]
+            if len(action) == 7:
+                info["intervene_action"] = [*action[:3], *action[-1:]]
 
         if (action[-1] < -0.5 and self.last_gripper_pos > 0.9) or (
             action[-1] > 0.5 and self.last_gripper_pos < 0.9

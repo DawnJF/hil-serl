@@ -1,5 +1,4 @@
 from typing import OrderedDict
-import cv2
 from franka_env.utils.rotations import euler_2_quat, quat_2_euler
 from franka_env.envs.franka_env import DefaultEnvConfig
 import numpy as np
@@ -10,6 +9,7 @@ import time
 from typing import Dict
 from scipy.spatial.transform import Rotation, Slerp
 import sys
+from PIL import Image
 
 sys.path.append("/home/robot/code/debug_UR_Robot_Arm_Show/tools")
 from zmq_tools import ZMQClient
@@ -58,10 +58,7 @@ class UR_Platform_Env(gym.Env):
     ):
         self.client = ZMQClient()
         self.action_scale = config.ACTION_SCALE
-        self._TARGET_POSE = config.TARGET_POSE
         self._RESET_POSE = config.RESET_POSE
-        self._REWARD_THRESHOLD = config.REWARD_THRESHOLD
-        self.url = config.SERVER_URL
         self.config = config
         self.max_episode_length = config.MAX_EPISODE_LENGTH
 
@@ -127,6 +124,8 @@ class UR_Platform_Env(gym.Env):
 
         self.cap = None
         self.reward = 0
+        self.curr_path_length = 0
+        self.terminate = False
 
         # if not fake_env:
         # from pynput import keyboard
@@ -178,13 +177,15 @@ class UR_Platform_Env(gym.Env):
         xyz_delta = action[:3]
 
         self.nextpos = self.currpos.copy()
+        # print(f"delta action: {xyz_delta} :  {xyz_delta * self.action_scale[0]}")
         self.nextpos[:3] = self.nextpos[:3] + xyz_delta * self.action_scale[0]
 
         # GET ORIENTATION FROM ACTION
-        self.nextpos[3:] = (
-            Rotation.from_euler("xyz", action[3:6] * self.action_scale[1])
-            * Rotation.from_quat(self.currpos[3:])
-        ).as_quat()
+        # self.nextpos[3:] = (
+        #     Rotation.from_euler("xyz", action[3:6] * self.action_scale[1])
+        #     * Rotation.from_quat(self.currpos[3:])
+        # ).as_quat()
+        self.nextpos[3:] = euler_2_quat(self._RESET_POSE[3:])
 
         gripper_action = action[6] * self.action_scale[2]
 
@@ -192,8 +193,8 @@ class UR_Platform_Env(gym.Env):
         self._send_pos_command(self.clip_safety_box(self.nextpos))
 
         self.curr_path_length += 1
-        dt = time.time() - start_time
-        time.sleep(max(0, (1.0 / self.hz) - dt))
+        # dt = time.time() - start_time
+        # time.sleep(max(0, (1.0 / self.hz) - dt))
 
         self._update_currpos()
         ob = self._get_obs()
@@ -201,6 +202,10 @@ class UR_Platform_Env(gym.Env):
         done = (
             self.curr_path_length >= self.max_episode_length or reward or self.terminate
         )
+        if reward == 1:
+            print(f"[UR_Platform_Env]: reward 1")
+        if self.curr_path_length >= self.max_episode_length:
+            print(f"[UR_Platform_Env]: max_episode_length {self.max_episode_length}")
         return ob, int(reward), done, False, {"succeed": reward}
 
     def get_im(self) -> Dict[str, np.ndarray]:
@@ -218,8 +223,10 @@ class UR_Platform_Env(gym.Env):
                 if key in self.config.IMAGE_CROP
                 else rgb
             )
-            resized = cv2.resize(
-                cropped_rgb, self.observation_space["images"][key].shape[:2][::-1]
+            resized = np.array(
+                Image.fromarray(cropped_rgb).resize(
+                    self.observation_space["images"][key].shape[:2]
+                )
             )
             images[key] = resized[..., ::-1]
 
@@ -239,7 +246,7 @@ class UR_Platform_Env(gym.Env):
         self.nextpos = p
         self._update_currpos()
 
-    def go_to_reset(self, joint_reset=False):
+    def go_to_reset(self, joint_reset=True):
         """
         The concrete steps to perform reset should be
         implemented each subclass for the specific task.
@@ -256,8 +263,11 @@ class UR_Platform_Env(gym.Env):
         if joint_reset:
             print("JOINT RESET")
             # requests.post(self.url + "jointreset")
-            self.client.post({"type": "jointreset"})
-            time.sleep(0.5)
+            arr = np.array(self._RESET_POSE).astype(np.float32)
+            data = {"type": "jointreset", "arr": arr.tolist()}
+            self.client.post(data)
+            time.sleep(3)
+            return
 
         # Perform Carteasian reset
         if self.randomreset:  # randomize reset position in xy plane
@@ -279,6 +289,7 @@ class UR_Platform_Env(gym.Env):
         # requests.post(self.url + "update_param", json=self.config.COMPLIANCE_PARAM)
 
     def reset(self, joint_reset=False, **kwargs):
+        print("[UR_Platform_Env] Resetting robot")
         self.last_gripper_act = time.time()
         # requests.post(self.url + "update_param", json=self.config.COMPLIANCE_PARAM)
 
@@ -291,7 +302,8 @@ class UR_Platform_Env(gym.Env):
             joint_reset = True
 
         self._recover()
-        self.go_to_reset(joint_reset=joint_reset)
+        # self.go_to_reset(joint_reset=joint_reset)
+        self.go_to_reset()
         self._recover()
         self.curr_path_length = 0
 
