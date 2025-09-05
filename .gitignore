@@ -10,3 +10,6 @@ wandb/
 checkpoint
 checkpoint*
 draft*
+*.png
+*.log
+wandb_2/

@@ -447,6 +447,7 @@ def main(_):
             description=FLAGS.exp_name,
             debug=FLAGS.debug,
             mode=FLAGS.wandb_mode,
+            output_dir=FLAGS.checkpoint_path,
         )
         return replay_buffer, wandb_logger
 

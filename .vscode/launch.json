@@ -21,7 +21,7 @@
             "args": [
                 "--exp_name=usb_pickup_insertion",
                 // "--checkpoint_path=first_run",
-                "--demo_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl",
+                "--demo_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_50_17-45-18.pkl",
                 "--learner",
                 "--debug=true",
                 // "--checkpoint_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl"
@@ -39,7 +39,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--exp_name=usb_pickup_insertion",
-                "--checkpoint_path=first_run",
+                "--checkpoint_path=../../experiments/usb_pickup_insertion/debug5",
                 "--actor"
             ],
             "env": {

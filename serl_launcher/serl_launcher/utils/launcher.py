@@ -243,6 +243,7 @@ def make_wandb_logger(
     description: str = "serl_launcher",
     debug: bool = False,
     mode: str = "online",
+    output_dir: str = None,
 ):
     wandb_config = WandBLogger.get_default_config()
     wandb_config.update(
@@ -257,5 +258,6 @@ def make_wandb_logger(
         wandb_config=wandb_config,
         variant={},
         debug=debug,
+        wandb_output_dir=output_dir
     )
     return wandb_logger
