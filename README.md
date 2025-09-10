@@ -123,3 +123,6 @@ If you use this code for your research, please cite our paper:
 ## Troubleshooting
 
 1. 3d 鼠标 Failed to open device -> 权限问题
+
+
+../../experiments/usb_pickup_insertion/wandb/wandb/offline-run-20250910_143441-usb_pickup_insertion_20250910_143441

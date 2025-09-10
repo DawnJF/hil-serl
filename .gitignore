@@ -13,3 +13,5 @@ draft*
 *.png
 *.log
 wandb_2/
+TODO*
+outputs/
