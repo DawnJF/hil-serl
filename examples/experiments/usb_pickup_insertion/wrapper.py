@@ -8,11 +8,13 @@ import copy
 import gymnasium as gym
 import time
 from franka_env.envs.franka_env import FrankaEnv
+from pynput import keyboard
+
 
 class USBEnv(FrankaEnv):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-    
+
     def init_cameras(self, name_serial_dict=None):
         """Init both wrist cameras."""
         if self.cap is not None:  # close cameras if they are already open
@@ -33,7 +35,7 @@ class USBEnv(FrankaEnv):
         time.sleep(0.1)
         requests.post(self.url + "update_param", json=self.config.PRECISION_PARAM)
         self._send_gripper_command(1.0)
-        
+
         # Move above the target pose
         target = copy.deepcopy(self.currpos)
         target[2] = self.config.TARGET_POSE[2] + 0.05
@@ -55,7 +57,7 @@ class USBEnv(FrankaEnv):
         self._update_currpos()
         obs = self._get_obs()
         return obs, info
-    
+
     def interpolate_move(self, goal: np.ndarray, timeout: float):
         """Move the robot to the goal position with linear interpolation."""
         if goal.shape == (6,):
@@ -63,7 +65,7 @@ class USBEnv(FrankaEnv):
         self._send_pos_command(goal)
         time.sleep(timeout)
         self._update_currpos()
-    
+
     def go_to_reset(self, joint_reset=False):
         """
         The concrete steps to perform reset should be
@@ -134,5 +136,46 @@ class GripperPenaltyWrapper(gym.Wrapper):
         else:
             info["grasp_penalty"] = 0.0
 
-        self.last_gripper_pos = observation["state"][0, 0]
+        # self.last_gripper_pos = observation["state"][0, 0]
+        self.last_gripper_pos = action[-1]
         return observation, reward, terminated, truncated, info
+
+
+class HumanRewardEnv(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+        self.success_key = False
+
+        def on_press(key):
+            try:
+                if str(key) == "Key.space":
+                    self._set_success()
+            except AttributeError:
+                pass
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+
+    def _set_success(self):
+        print("\033[92m Success Key Pressed\033[0m")
+        self.success_key = True
+
+    def step(self, action):
+        obs, _, done, truncated, info = self.env.step(action)
+        print("step")
+
+        if self.success_key:
+            reward = 1.0
+            # print("\033[92m Reward: 1.0\033[0m")
+            self.success_key = False
+            done = True
+        else:
+            reward = 0.0
+
+        return obs, reward, done, truncated, info
+
+    def close(self):
+        if hasattr(self, "listener"):
+            self.listener.stop()
+        return self.env.close()

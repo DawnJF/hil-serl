@@ -63,7 +63,7 @@ class SpaceMouseExpert:
             self.latest_data["action"] = action
             self.latest_data["buttons"] = buttons
 
-    def get_action(self) -> Tuple[np.ndarray, list]:
+    def get_action(self):
         """Returns the latest action and button state of the SpaceMouse."""
         action = self.latest_data["action"]
         buttons = self.latest_data["buttons"]
