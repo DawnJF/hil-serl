@@ -51,7 +51,7 @@ def main(_):
             and actions[2] == 0
             and actions[3] == 0
         ):
-            print("Note: not moving!")
+            # print("Note: not moving!")
             continue
 
         transition = copy.deepcopy(
@@ -71,6 +71,7 @@ def main(_):
 
         obs = next_obs
         if done:
+            print(f"\033[33m Done: {done}, Reward: {rew}\033[0m")
             if info["succeed"]:
                 for transition in trajectory:
                     transitions.append(copy.deepcopy(transition))
@@ -79,6 +80,7 @@ def main(_):
             trajectory = []
             returns = 0
             # After reset, we should suspend 5s for reposition object.
+            print("\033[31m WILL TO BE RESETED\033[0m")
             time.sleep(4)
             obs, info = env.reset()
 
@@ -87,10 +89,10 @@ def main(_):
     uuid = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     ymd = uuid.split("_")[0]
     hms = uuid.split("_")[1]
-    file_dir = f"/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/{ymd}"
+    file_dir = f"/home/facelesswei/code/Jax_Hil_Serl_Dataset2/{ymd}"
     if not os.path.exists(file_dir):
         os.makedirs(file_dir)
-    file_name = f"/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/{ymd}/{FLAGS.exp_name}_{success_needed}_{hms}.pkl"
+    file_name = f"/home/facelesswei/code/Jax_Hil_Serl_Dataset2/{ymd}/{FLAGS.exp_name}_{success_needed}_{hms}.pkl"
     with open(file_name, "wb") as f:
         pkl.dump(transitions, f)
         print(f"saved {success_needed} demos to {file_name}")

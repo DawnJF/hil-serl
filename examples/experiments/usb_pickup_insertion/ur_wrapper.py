@@ -11,7 +11,7 @@ from scipy.spatial.transform import Rotation, Slerp
 import sys
 from PIL import Image
 
-sys.path.append("/home/robot/code/debug_UR_Robot_Arm_Show/tools")
+sys.path.append("/home/facelesswei/code/debug_UR_Robot_Arm_Show/tools")
 from zmq_tools import ZMQClient
 
 
@@ -172,7 +172,7 @@ class UR_Platform_Env(gym.Env):
 
     def step(self, action: np.ndarray) -> tuple:
         """standard gym step function."""
-        start_time = time.time()
+        start_time = time.perf_counter()
         action = np.clip(action, self.action_space.low, self.action_space.high)
         xyz_delta = action[:3]
 
@@ -193,8 +193,10 @@ class UR_Platform_Env(gym.Env):
         self._send_pos_command(self.clip_safety_box(self.nextpos))
 
         self.curr_path_length += 1
-        # dt = time.time() - start_time
-        # time.sleep(max(0, (1.0 / self.hz) - dt))
+        # dt_s = time.perf_counter() - start_time
+        # if 1 / self.hz - dt_s > 0:
+        #     print(f"[UR_Platform_Env] sleep {1 / self.hz - dt_s}")
+        #     time.sleep(1 / self.hz - dt_s)
 
         self._update_currpos()
         ob = self._get_obs()
@@ -205,7 +207,7 @@ class UR_Platform_Env(gym.Env):
         if reward == 1:
             print(f"[UR_Platform_Env]: reward 1")
         if self.curr_path_length >= self.max_episode_length:
-            print(f"[UR_Platform_Env]: max_episode_length {self.max_episode_length}")
+            print(f"\033[34m[UR_Platform_Env]: max_episode_length {self.max_episode_length}\033[0m")
         return ob, int(reward), done, False, {"succeed": reward}
 
     def get_im(self) -> Dict[str, np.ndarray]:
@@ -228,7 +230,7 @@ class UR_Platform_Env(gym.Env):
                     self.observation_space["images"][key].shape[:2]
                 )
             )
-            images[key] = resized[..., ::-1]
+            images[key] = resized
 
         return images
 
@@ -365,7 +367,11 @@ class UR_Platform_Env(gym.Env):
         self.currgripper = np.array(ps["gripper"])
 
         self.cap = ps["obs"]
-        self.reward = ps["obs"]["reward"]
+        if "reward" in ps["obs"]:
+            self.reward = ps["obs"]["reward"]
+        else:
+            # print("[W] No reward in observation, set to 0")
+            self.reward = 0
 
     def _get_obs(self) -> dict:
         images = self.get_im()

@@ -18,8 +18,8 @@ from serl_launcher.networks.reward_classifier import load_classifier_func
 from PIL import Image
 
 sys.path.append(os.getcwd())
-sys.path.append("/home/robot/code/hil-serl")
-sys.path.append("/home/robot/code/hil-serl/examples")
+sys.path.append("/home/facelesswei/code/hil-serl")
+sys.path.append("/home/facelesswei/code/hil-serl/examples")
 from examples.experiments.usb_pickup_insertion.config import EnvConfig, UREnvConfig
 from tools import print_dict_structure
 
@@ -33,7 +33,7 @@ if not hasattr(jax, "tree_map"):
 
 def test_Env():
 
-    proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
+    # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
     proprio_keys = ["tcp_pose", "gripper_pose"]
 
     # env = FakeFrankaEnv(config=EnvConfig())
@@ -59,14 +59,20 @@ def test_Env():
     # print(f"obs['images']['wrist'].shape: {obs['images']['wrist'].shape}")
     # print(f"obs['state']['tcp_pose'].shape: {obs['state']['tcp_pose'].shape}")
 
+    # image_w = Image.fromarray(obs["images"]["wrist"].squeeze())
+    # image_w.save("/home/facelesswei/code/hil-serl/image_w.png")
+    # image_r = Image.fromarray(obs["images"]["rgb"].squeeze())
+    # image_r.save("/home/facelesswei/code/hil-serl/image_r.png")
+
     print("==== step ====")
-    for _ in range(1000):
+    for _ in range(11110):
         start_time = time.perf_counter()
         # action = np.array([0.0000000000000001,0.0,0.0,0.0,0.0,0.0,0.0])
         # action = np.array([0.63226587,  0.9993608,  -0.08116492 , 0.52754897,  0.27143225, -0.7813476,0.6737941])
         # action = np.array([-1.0,-1.0,-1.0,0.0,0.0,0.0,0.0])
         # action = np.array([-0.35847732,-0.41141108, -0.04426178,  0.9987256, -0.91949886,  0.13108964,0.08994653])
         action = env.action_space.sample()
+        action[-1] = -1
 
         obs, reward, done, truncated, info = env.step(action)
         if "intervene_action" in info:
@@ -134,7 +140,7 @@ def save_np_as_image(
 
 
 def test_dataset():
-    path = "/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-04/usb_pickup_insertion_2_11-44-07.pkl"
+    path = "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_1_10-39-07.pkl"
 
     with open(path, "rb") as f:
         transitions = pkl.load(f)
@@ -181,6 +187,6 @@ def replay_dataset():
 
 if __name__ == "__main__":
 
-    # test_Env()
+    test_Env()
     # test_dataset()
-    replay_dataset()
+    # replay_dataset()
