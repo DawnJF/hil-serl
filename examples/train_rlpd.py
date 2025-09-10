@@ -56,6 +56,7 @@ flags.DEFINE_boolean(
 )  # debug mode will disable wandb logging
 
 flags.DEFINE_string("wandb_mode", "online", "wandb mode, online or offline, if debug is true, mode is disabled.")
+flags.DEFINE_string("wandb_output_dir", None, "wandb output dir")
 
 devices = jax.local_devices()
 num_devices = len(devices)
@@ -447,7 +448,7 @@ def main(_):
             description=FLAGS.exp_name,
             debug=FLAGS.debug,
             mode=FLAGS.wandb_mode,
-            output_dir=FLAGS.checkpoint_path,
+            output_dir=FLAGS.wandb_output_dir,
         )
         return replay_buffer, wandb_logger
 

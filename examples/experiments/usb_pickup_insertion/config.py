@@ -17,12 +17,16 @@ from serl_launcher.wrappers.chunking import ChunkingWrapper
 from serl_launcher.networks.reward_classifier import load_classifier_func
 
 sys.path.append(os.getcwd())
-sys.path.append("/home/robot/code/hil-serl")
-sys.path.append("/home/robot/code/hil-serl/examples")
+sys.path.append("/home/facelesswei/code/hil-serl")
+sys.path.append("/home/facelesswei/code/hil-serl/examples")
 from tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
-from experiments.usb_pickup_insertion.wrapper import USBEnv, GripperPenaltyWrapper
+from experiments.usb_pickup_insertion.wrapper import (
+    HumanRewardEnv,
+    USBEnv,
+    GripperPenaltyWrapper,
+)
 from experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 
 
@@ -120,8 +124,8 @@ class UREnvConfig(DefaultEnvConfig):
         },
     }
     IMAGE_CROP = {
-        "wrist": lambda img: img[0:480, 0:640],
-        "rgb": lambda img: img[135:370, 230:730],
+        "wrist": lambda img: img[0:300, 0:640],
+        "rgb": lambda img: img[300:420, 390:640],
     }
     # TARGET_POSE = np.array(
     #     [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
@@ -152,6 +156,7 @@ class TrainConfig(DefaultTrainingConfig):
     checkpoint_period = 1000
     cta_ratio = 2
     random_steps = 0
+    # discount = 0.99
     discount = 0.98
     buffer_period = 1000
     encoder_type = "resnet-pretrained"
@@ -160,6 +165,7 @@ class TrainConfig(DefaultTrainingConfig):
     def get_environment(self, fake_env=False, save_video=False, classifier=False):
         # env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
         env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
+        env = HumanRewardEnv(env)
         if not fake_env:
             env = SpacemouseIntervention(env)
         env = RelativeFrame(env, include_relative_pose=False)
@@ -190,13 +196,45 @@ def test_mouse():
     print(f"action_space: {env.action_space}")
 
     time.sleep(1)
-    # env.reset()
+    env.reset()
 
     while True:
         action = env.action_space.sample()
         action = np.zeros((7,))
         print(f"test action: {action}")
         obs, reward, done, truncated, info = env.step(action)
+
+
+def test_images():
+    from PIL import Image
+
+    env = UR_Platform_Env(fake_env=False, config=UREnvConfig())
+    env.reset()
+    action = env.action_space.sample()
+    obs, reward, done, truncated, info = env.step(action)
+    print(obs.keys())
+    Image.fromarray(obs["images"]["rgb"]).save("outputs/test_rgb/rgb.png")
+
+
+def test_reward_model():
+    env = UR_Platform_Env(fake_env=False, config=UREnvConfig())
+    env = HumanRewardEnv(env)
+    env = SpacemouseIntervention(env)
+
+    print(f"action_space: {env.action_space}")
+
+    time.sleep(1)
+    env.reset()
+
+    while True:
+        action = env.action_space.sample()
+        action = np.zeros((7,))
+        obs, reward, done, truncated, info = env.step(action)
+        if reward:
+            print(f"\033 Reward: {reward}\033[0m")
+            env.reset()
+        elif done:
+            env.reset()
 
 
 def test_fake_Env():
@@ -236,4 +274,6 @@ if __name__ == "__main__":
     # test
 
     # test_fake_Env()
-    test_mouse()
+    # test_mouse()
+    test_reward_model()
+    # test_images()
