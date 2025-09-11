@@ -1,3 +1,9 @@
+roscore
+all_camera.sh
+inference.sh
+run env
+
+
 # HIL-SERL: Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)

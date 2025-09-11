@@ -6,11 +6,15 @@ crop_example_t = transforms.Lambda(
 )
 
 
-def get_train_transform(crop=None):
-    if crop is not None:
+def get_train_transform(crop_dict=None):
+    if crop_dict is not None:
         crop_t = transforms.Lambda(
             lambda x: transforms.functional.crop(
-                x, top=crop[0], left=crop[1], height=crop[2], width=crop[3]
+                x,
+                top=crop_dict["top"],
+                left=crop_dict["left"],
+                height=crop_dict["height"],
+                width=crop_dict["width"],
             )
         )
     else:
@@ -33,11 +37,15 @@ def get_train_transform(crop=None):
     )
 
 
-def get_eval_transform(crop=None):
-    if crop is not None:
+def get_eval_transform(crop_dict=None):
+    if crop_dict is not None:
         crop_t = transforms.Lambda(
             lambda x: transforms.functional.crop(
-                x, top=crop[0], left=crop[1], height=crop[2], width=crop[3]
+                x,
+                top=crop_dict["top"],
+                left=crop_dict["left"],
+                height=crop_dict["height"],
+                width=crop_dict["width"],
             )
         )
     else:
