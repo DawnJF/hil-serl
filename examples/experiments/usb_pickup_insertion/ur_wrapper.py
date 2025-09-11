@@ -125,19 +125,6 @@ class UR_Platform_Env(gym.Env):
         self.cap = None
         self.reward = 0
         self.curr_path_length = 0
-        self.terminate = False
-
-        # if not fake_env:
-        # from pynput import keyboard
-
-        # self.terminate = False
-
-        # def on_press(key):
-        #     if key == keyboard.Key.esc:
-        #         self.terminate = True
-
-        # self.listener = keyboard.Listener(on_press=on_press)
-        # self.listener.start()
 
         print("Initialized UR")
 
@@ -193,21 +180,24 @@ class UR_Platform_Env(gym.Env):
         self._send_pos_command(self.clip_safety_box(self.nextpos))
 
         self.curr_path_length += 1
-        # dt_s = time.perf_counter() - start_time
-        # if 1 / self.hz - dt_s > 0:
-        #     print(f"[UR_Platform_Env] sleep {1 / self.hz - dt_s}")
-        #     time.sleep(1 / self.hz - dt_s)
+        dt_s = time.perf_counter() - start_time
+        min_step_time = 1 / 30  # 30hz
+        if dt_s < min_step_time:
+            print(
+                f"[UR_Platform_Env] sleep min_step_time: {(min_step_time - dt_s):.4f}s"
+            )
+            time.sleep(min_step_time - dt_s)
 
         self._update_currpos()
         ob = self._get_obs()
         reward = self.reward
-        done = (
-            self.curr_path_length >= self.max_episode_length or reward or self.terminate
-        )
+        done = self.curr_path_length >= self.max_episode_length or reward
         if reward == 1:
             print(f"[UR_Platform_Env]: reward 1")
         if self.curr_path_length >= self.max_episode_length:
-            print(f"\033[34m[UR_Platform_Env]: max_episode_length {self.max_episode_length}\033[0m")
+            print(
+                f"\033[34m[UR_Platform_Env]: max_episode_length {self.max_episode_length}\033[0m"
+            )
         return ob, int(reward), done, False, {"succeed": reward}
 
     def get_im(self) -> Dict[str, np.ndarray]:
@@ -254,12 +244,6 @@ class UR_Platform_Env(gym.Env):
         implemented each subclass for the specific task.
         Should override this method if custom reset procedure is needed.
         """
-        # Change to precision mode for reset        # Use compliance mode for coupled reset
-        # self._update_currpos()
-        # self._send_pos_command(self.currpos)
-        # time.sleep(0.3)
-        # requests.post(self.url + "update_param", json=self.config.PRECISION_PARAM)
-        # time.sleep(0.5)
 
         # Perform joint reset if needed
         if joint_reset:
@@ -287,13 +271,9 @@ class UR_Platform_Env(gym.Env):
             reset_pose = self.resetpos.copy()
             self.interpolate_move(reset_pose, timeout=1)
 
-        # Change to compliance mode
-        # requests.post(self.url + "update_param", json=self.config.COMPLIANCE_PARAM)
-
     def reset(self, joint_reset=False, **kwargs):
         print("[UR_Platform_Env] Resetting robot")
         self.last_gripper_act = time.time()
-        # requests.post(self.url + "update_param", json=self.config.COMPLIANCE_PARAM)
 
         self.cycle_count += 1
         if (
@@ -311,12 +291,10 @@ class UR_Platform_Env(gym.Env):
 
         self._update_currpos()
         obs = self._get_obs()
-        self.terminate = False
         return obs, {"succeed": False}
 
     def _recover(self):
         """Internal function to recover the robot from error state."""
-        # requests.post(self.url + "clearerr")
         self.client.post({"type": "clearerr"})
 
     def _send_pos_command(self, pos: np.ndarray):
@@ -338,7 +316,6 @@ class UR_Platform_Env(gym.Env):
                 and (self.currgripper <= 0.25)
                 and (time.time() - self.last_gripper_act > self.gripper_sleep)
             ):  # close gripper
-                # requests.post(self.url + "close_gripper")
                 self.client.post({"type": "close_gripper"})
                 self.last_gripper_act = time.time()
                 time.sleep(self.gripper_sleep)
@@ -348,7 +325,6 @@ class UR_Platform_Env(gym.Env):
                 and (self.currgripper > 0.25)
                 and (time.time() - self.last_gripper_act > self.gripper_sleep)
             ):  # open gripper
-                # requests.post(self.url + "open_gripper")
                 self.client.post({"type": "open_gripper"})
                 self.last_gripper_act = time.time()
                 time.sleep(self.gripper_sleep)
@@ -361,7 +337,6 @@ class UR_Platform_Env(gym.Env):
         """
         Internal function to get the latest state of the robot and its gripper.
         """
-        # ps = requests.post(self.url + "getstate").json()
         ps = self.client.post({"type": "getstate"})
         self.currpos = np.array(ps["pose"])
         self.currgripper = np.array(ps["gripper"])
