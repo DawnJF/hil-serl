@@ -21,7 +21,7 @@ sys.path.append(os.getcwd())
 sys.path.append("/home/facelesswei/code/hil-serl")
 sys.path.append("/home/facelesswei/code/hil-serl/examples")
 from examples.experiments.usb_pickup_insertion.config import EnvConfig, UREnvConfig
-from tools import print_dict_structure
+from utils.tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
 from experiments.usb_pickup_insertion.wrapper import USBEnv, GripperPenaltyWrapper

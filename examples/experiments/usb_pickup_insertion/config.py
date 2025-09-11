@@ -19,7 +19,7 @@ from serl_launcher.networks.reward_classifier import load_classifier_func
 sys.path.append(os.getcwd())
 sys.path.append("/home/facelesswei/code/hil-serl")
 sys.path.append("/home/facelesswei/code/hil-serl/examples")
-from tools import print_dict_structure
+from utils.tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
 from experiments.usb_pickup_insertion.wrapper import (
