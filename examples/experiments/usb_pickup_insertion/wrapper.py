@@ -146,11 +146,14 @@ class HumanRewardEnv(gym.Wrapper):
         super().__init__(env)
 
         self.success_key = False
+        self.failure_key = False
 
         def on_press(key):
             try:
                 if str(key) == "Key.space":
                     self._set_success()
+                elif str(key) == "Key.enter":
+                    self._set_failure()
             except AttributeError:
                 pass
 
@@ -160,15 +163,22 @@ class HumanRewardEnv(gym.Wrapper):
     def _set_success(self):
         print("\033[92m Success Key Pressed\033[0m")
         self.success_key = True
+    
+    def _set_failure(self):
+        print("\033[91m Faliure Key Pressed\033[0m")
+        self.failure_key = True
 
     def step(self, action):
         obs, _, done, truncated, info = self.env.step(action)
-        print("step")
 
         if self.success_key:
             reward = 1.0
             # print("\033[92m Reward: 1.0\033[0m")
             self.success_key = False
+            done = True
+        elif self.failure_key:
+            reward = 0.0
+            self.failure_key = False
             done = True
         else:
             reward = 0.0
