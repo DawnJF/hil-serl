@@ -1,0 +1,118 @@
+import jax
+
+if not hasattr(jax, "tree_map"):
+    jax.tree_map = jax.tree.map
+if not hasattr(jax, "tree_leaves"):
+    jax.tree_leaves = jax.tree.leaves
+import copy
+import os
+from tqdm import tqdm
+import numpy as np
+import pickle as pkl
+import datetime
+from absl import app, flags
+from pynput import keyboard
+
+from experiments.mappings import CONFIG_MAPPING
+
+FLAGS = flags.FLAGS
+flags.DEFINE_string(
+    "exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder."
+)
+flags.DEFINE_integer("trajectories_needed", 200, "Number of trajectories to collect.")
+
+# 状态标记
+collecting = False  # 是否在采集轨迹
+start_collect = False
+stop_collect = False
+
+
+def on_press(key):
+    global start_collect, stop_collect
+    try:
+        if hasattr(key, "char"):
+            if key.char == "a":  # 按 a 开始采集
+                start_collect = True
+            elif key.char == "b":  # 按 b 停止采集并保存
+                stop_collect = True
+    except AttributeError:
+        pass
+
+
+def main(_):
+    global collecting, start_collect, stop_collect
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+
+    assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
+    config = CONFIG_MAPPING[FLAGS.exp_name]()
+    env = config.get_environment(fake_env=False, save_video=False, classifier=False)
+
+    obs, _ = env.reset()
+    trajectories_needed = FLAGS.trajectories_needed
+    pbar = tqdm(total=trajectories_needed)
+
+    trajectory = []  # 当前一条轨迹
+    saved_count = 0  # 已保存数量
+
+    # 建立以日期为名的输出目录
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    save_dir = os.path.join("./classifier_data", date_str)
+    os.makedirs(save_dir, exist_ok=True)
+
+    while saved_count < trajectories_needed:
+        actions = np.zeros(env.action_space.sample().shape)
+        next_obs, rew, done, truncated, info = env.step(actions)
+        if "intervene_action" in info:
+            actions = info["intervene_action"]
+
+        transition = copy.deepcopy(
+            dict(
+                observations=obs,
+                actions=actions,
+                next_observations=next_obs,
+                rewards=rew,
+                masks=1.0 - done,
+                dones=done,
+            )
+        )
+        obs = next_obs
+
+        # 按 a → 开始采集
+        if start_collect:
+            if not collecting:
+                trajectory = []  # 清空旧的
+                collecting = True
+                print("Start collecting new trajectory")
+            trajectory.append(transition)
+            start_collect = False  # 重置标记
+
+        # 正在采集 → 每步都保存
+        elif collecting:
+            trajectory.append(transition)
+
+        # 按 b → 停止采集并保存
+        if stop_collect and collecting and len(trajectory) > 0:
+            uuid = datetime.datetime.now().strftime("%H-%M-%S-%f")
+            file_name = os.path.join(
+                save_dir, f"{FLAGS.exp_name}_traj_{saved_count+1}_{uuid}.pkl"
+            )
+            with open(file_name, "wb") as f:
+                pkl.dump(trajectory, f)
+            print(f"saved trajectory {saved_count+1} to {file_name}")
+
+            trajectory = []
+            collecting = False
+            stop_collect = False
+            saved_count += 1
+            pbar.update(1)
+
+        # 如果环境结束 → reset
+        if done or truncated:
+            obs, _ = env.reset()
+
+    print(f"Finished! Saved {saved_count} trajectories in {save_dir}")
+
+
+if __name__ == "__main__":
+    app.run(main)
