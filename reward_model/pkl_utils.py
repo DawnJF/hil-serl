@@ -86,9 +86,9 @@ def jax_load_and_convert_data(data_path, folder_list=None):
     return transitions
 
 
-def load_pkl_to_reward_model(test_size=0.3, random_state=42):
-    folder_list = ["merged_data.pkl"]
-    data_path = "/home/facelesswei/code/hil-serl/classifier_data/09_11_4data"
+def load_pkl_to_reward_model(path, test_size=0.3, random_state=42):
+    folder_list = [os.path.basename(path)]
+    data_path = os.path.dirname(path)
     transitions = jax_load_and_convert_data(data_path, folder_list)
     images_list = []
     class_list = []

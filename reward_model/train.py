@@ -1,35 +1,71 @@
 import sys
 import os
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torchvision import models
-
 from sklearn.model_selection import train_test_split
+from dataclasses import dataclass
 import numpy as np
 import pandas as pd
-from PIL import Image
+import logging
+import tyro
+from torchvision import transforms
 
+sys.path.append(os.getcwd())
 from reward_model.net import ResNetClassifier
 from reward_model.pkl_utils import load_pkl_to_reward_model
 from utils.image_augmentations import get_eval_transform, get_train_transform
-from reward_model.pkl_utils import image_normalization
+from utils.tools import get_device, setup_logging
 
 
-# 示例数据集，假设每个样本有n张图片和一个标签
+@dataclass
+class Args:
+    output_dir: str = "outputs/reward_model"
+    dataset_path: str = (
+        "/Users/majianfei/Downloads/usb_pickup_insertion_30_11-50-21.pkl"
+    )
+    model_path: str = None
+
+
+def get_train_transform():
+    """need CxHxW input"""
+    return transforms.Compose(
+        [
+            # pre-process
+            transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.float32)),
+            transforms.Lambda(lambda x: x / 255.0),
+            # data augmentations
+            transforms.ColorJitter(
+                brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1
+            ),
+            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),  # 随机平移
+            # post-process
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+
+
+def get_eval_transform():
+    return transforms.Compose(
+        [
+            # pre-process
+            transforms.Lambda(lambda x: torch.tensor(x, dtype=torch.float32)),
+            transforms.Lambda(lambda x: x / 255.0),
+            # post-process
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+
+
 class ImageSequenceDataset(Dataset):
     # Image.open(p).convert("RGB")
     def __init__(
         self,
         images_list,
         class_list,
-        transform=None,
+        transform,
     ):
 
         self.transform = transform
@@ -43,32 +79,15 @@ class ImageSequenceDataset(Dataset):
         label = self.class_list[idx]
         imgs = []
         for i in self.images_list[idx]:
-            if self.transform:
-                i = self.transform(i)
-            imgs.append(torch.tensor(i, dtype=torch.float32))
+            i = self.transform(i)
+            imgs.append(i)
 
         imgs = torch.stack(imgs, dim=0)  # [N, C, H, W]
         label = torch.tensor(label, dtype=torch.long)  # 转换为张量
         return imgs, label
 
 
-import os
-import torch
-
-
-def save_checkpoint_multi(model, save_dir, model_name="model", epoch=None):
-
-    os.makedirs(save_dir, exist_ok=True)
-
-    # 生成文件名
-    if epoch is not None:
-        filename = f"{model_name}_epoch{epoch+1}.pth"
-    else:
-        filename = f"{model_name}.pth"
-
-    path = os.path.join(save_dir, filename)
-
-    # 保存模型 state_dict
+def save_checkpoint(model, path):
     torch.save({"model_state_dict": model.state_dict()}, path)
     print(f"Checkpoint saved to {path}")
 
@@ -80,14 +99,14 @@ def load_checkpoint(model, path):
     return checkpoint.get("crop_dict", None)
 
 
-def load_and_split_data(test_size=0.2, random_state=42):
+def load_and_split_data(path, test_size=0.2, random_state=42):
     """
     加载数据并分割为训练集和测试集
 
     Returns:
         train_images, test_images, train_labels, test_labels
     """
-    images_list, class_list, _, _ = load_pkl_to_reward_model()
+    images_list, class_list, _, _ = load_pkl_to_reward_model(path)
 
     train_images, test_images, train_labels, test_labels = train_test_split(
         images_list,
@@ -124,27 +143,34 @@ def test(model_path=None):
     print(f"Test Accuracy: {accuracy:.2f}% ({correct}/{total})")
 
 
-def train(save_path="reward_model", model_path=None, epochs=10):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def train(args: Args, epochs=10):
+    device = get_device()
 
-    train_images, test_images, train_labels, test_labels = load_and_split_data()
+    args.output_dir = f"{args.output_dir}_" + time.strftime("%Y%m%d_%H%M%S")
 
-    print(f"Training samples: {len(train_images)}")
-    print(f"Testing samples: {len(test_images)}")
+    os.makedirs(args.output_dir, exist_ok=True)
+    setup_logging(args.output_dir)
+
+    train_images, test_images, train_labels, test_labels = load_and_split_data(
+        args.dataset_path
+    )
+
+    logging.info(f"Training samples: {len(train_images)}")
+    logging.info(f"Testing samples: {len(test_images)}")
 
     train_dataset = ImageSequenceDataset(
-        train_images, train_labels, transform=image_normalization
+        train_images, train_labels, transform=get_train_transform()
     )
     train_dataloader = DataLoader(train_dataset, batch_size=16, shuffle=True)
 
     test_dataset = ImageSequenceDataset(
-        test_images, test_labels, transform=image_normalization
+        test_images, test_labels, transform=get_eval_transform()
     )
     test_dataloader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
     model = ResNetClassifier().to(device)
-    if model_path:
-        load_checkpoint(model, path=model_path)
+    if args.model_path is not None:
+        load_checkpoint(model, path=args.model_path)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-5)
 
@@ -188,17 +214,14 @@ def train(save_path="reward_model", model_path=None, epochs=10):
 
         val_accuracy = 100 * val_correct / val_total
 
-        print(f"Epoch {epoch+1}/{epochs}:")
-        print(f"  Train Loss: {avg_loss:.4f}")
-        print(f"  Train Accuracy: {train_accuracy:.2f}% ({correct}/{total})")
-        print(f"  Val Accuracy: {val_accuracy:.2f}% ({val_correct}/{val_total})")
-        print("-" * 40)
+        logging.info(f"Epoch {epoch+1}/{epochs}:")
+        logging.info(f"  Train Loss: {avg_loss:.4f}")
+        logging.info(f"  Train Accuracy: {train_accuracy:.2f}% ({correct}/{total})")
+        logging.info(f"  Val Accuracy: {val_accuracy:.2f}% ({val_correct}/{val_total})")
+        logging.info("-" * 40)
 
-        save_checkpoint_multi(
-            model,
-            save_dir="/home/facelesswei/code/hil-serl/checkpoints",
-            model_name=f"single_image_model_epoch{epoch+1}",
-        )
+        cp_name = f"{args.output_dir}/checkpoint-{epoch+1}.pth"
+        save_checkpoint(model, path=cp_name)
 
 
 class RewardModelInferencer:
@@ -240,4 +263,5 @@ if __name__ == "__main__":
     # test("/home/robot/code/debug_UR_Robot_Arm_Show/reward_model/checkpoint_by_jax_data/checkpoint-9.pth")
     # test("/home/robot/code/debug_UR_Robot_Arm_Show/reward_model/checkpoint-4.pth")
     # test("/home/facelesswei/code/debug_UR_Robot_Arm_Show/reward_model/checkpoint_strip")
-    train()
+    args = tyro.cli(Args)
+    train(args)
