@@ -1,3 +1,4 @@
+import logging
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -49,44 +50,53 @@ class ProprioEncoder(nn.Module):
 
 
 class EncoderWrapper(nn.Module):
-    def __init__(self, image_keys, image_dim=512, proprio_dim=16, hidden_dim=256):
+    def __init__(self, image_num, proprio_dim=16):
         super().__init__()
-        self.image_keys = image_keys
+        self.image_num = image_num
         self.proprio_dim = proprio_dim
-        self.image_encoder = ImageEncoder(bottleneck_dim=image_dim)
+        self.image_encoder = ImageEncoder(bottleneck_dim=512)
         self.proprio_encoder = ProprioEncoder(
             input_dim=proprio_dim, hidden_dim=64, output_dim=64
         )
 
-    def forward(self, obs):
-        assert isinstance(obs, dict), "Input must be a dictionary"
-        image_list = []
-        for key in obs:
-            image_list.append(obs[key])
-        state = obs["state"]
+    def forward(self, state, imgs):
+        B, N, C, H, W = imgs.shape
+        assert N == self.image_num, f"Expected {self.image_num} images, but got {N}"
 
-        image_features = [self.image_encoder(img) for img in image_list]
+        image_features = []
+
+        # Iterate over the N images for each batch in imgs
+        for i in range(N):
+            # Extract each image corresponding to the i-th image in the sequence
+            img = imgs[:, i, :, :, :]  # Shape: (B, C, H, W)
+            img_features = self.image_encoder(img)  # Pass through the image encoder
+            image_features.append(img_features)
+
+        image_features = torch.cat(image_features, dim=1)  # Shape: (B, N * image_dim)
 
         state_features = self.proprio_encoder(state)
-        return torch.cat([*image_features, state_features], dim=-1)
+        return torch.cat([image_features, state_features], dim=-1)
 
-    def get_out_shape(self, image_shape=(128, 128, 3)):
+    def get_out_shape(self, image_shape=128):
         """获取编码器输出的形状"""
 
-        image_shape = image_shape[:2]  # (H, W)
-        fake_obs = {
-            "image": torch.zeros(1, 3, *image_shape),
-            "state": torch.zeros(1, self.proprio_dim),
-        }
-        return self.forward(fake_obs).shape[1]
+        image1 = torch.zeros(1, self.image_num, 3, image_shape, image_shape)
+        state = torch.zeros(1, self.proprio_dim)
+        return self.forward(state, image1).shape[1]
 
 
-class Actor(nn.Module):
-    def __init__(self, image_keys, image_shape, action_dim):
+class BCActor(nn.Module):
+    def __init__(self, args):
         super().__init__()
-        self.encoder = EncoderWrapper(image_keys=image_keys)
+        image_num = args.image_num
+        image_shape = args.image_shape
+        state_dim = args.state_dim
+        action_dim = args.action_dim
+
+        self.encoder = EncoderWrapper(image_num=image_num, proprio_dim=state_dim)
 
         encode_dim = self.encoder.get_out_shape(image_shape)
+        logging.info(f"Encoder output dim: {encode_dim}")
 
         self.actor = nn.Sequential(
             nn.Linear(encode_dim, 256),
@@ -96,6 +106,6 @@ class Actor(nn.Module):
             nn.Linear(256, action_dim),
         )
 
-    def forward(self, obs):
-        x = self.encoder(obs)
+    def forward(self, state, imgs):
+        x = self.encoder(state, imgs)
         return self.actor(x)

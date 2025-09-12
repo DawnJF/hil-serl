@@ -8,17 +8,6 @@ from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
 
-def image_normalization(img):
-    # 如果图像是 HWC 格式，转换为 CHW 格式
-    if img.shape[-1] == 3:  # 最后一个维度是通道数
-        img = img.transpose(2, 0, 1)  # HWC -> CHW
-    normalized_img = img.astype(np.float32) / 255.0
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)[:, None, None]
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)[:, None, None]
-    standardized_img = (normalized_img - mean) / std
-    return standardized_img
-
-
 def jax_process_images(observation):
     """
     Process images shape (1, H, W, C) to (C, H, W)
@@ -34,6 +23,51 @@ def jax_process_images(observation):
     if observation.shape[2] == 3:
         observation = observation.transpose(2, 0, 1)
     return observation
+
+
+def load_pkl(data_path, key_mapping):
+    """
+    data keys: ['observations', 'actions', 'next_observations', 'rewards', 'masks', 'dones', 'infos']
+    observations keys: ['rgb', 'state', 'wrist']
+
+    Args:
+        key_mapping (dict): mapping from old keys to new keys
+    Returns:
+        transitions (list): transitions data
+    """
+    transitions = []
+    df = pd.read_pickle(data_path)
+    for i in tqdm(range(len(df)), desc="Processing pkl data"):
+        transition = {}
+
+        # Iterate over key_mapping to re-map the keys based on user-defined mapping
+        for old_key, new_key in key_mapping.items():
+            # Check if the key is a top-level key or nested under 'observations' (or other nested keys)
+            keys = old_key.split(":")  # This assumes the key is like "observations:rgb"
+
+            if len(keys) == 1:
+                key = keys[0]
+                assert key in df[i]
+
+                transition[new_key] = df[i][key]
+            elif len(keys) == 2:
+                top_key, sub_key = keys
+                assert top_key in df[i] and sub_key in df[i][top_key]
+
+                transition[new_key] = df[i][top_key][sub_key]
+
+        transitions.append(transition)
+    return transitions
+
+
+def test_load_pkl():
+    mapping = {
+        "observations:rgb": "image1",
+        "observations:wrist": "image2",
+        "observations:state": "state",
+        "actions": "actions",
+    }
+    load_pkl("/Users/majianfei/Downloads/usb_pickup_insertion_30_11-50-21.pkl", mapping)
 
 
 def jax_process_trajectory(data_path):
@@ -110,4 +144,4 @@ def load_pkl_to_reward_model(path, test_size=0.3, random_state=42):
 
 if __name__ == "__main__":
 
-    load_pkl_to_reward_model()
+    test_load_pkl()
