@@ -7,6 +7,10 @@ import torch.nn as nn
 import torchvision.models as models
 from PIL import Image
 from gymnasium import Env, spaces
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from reward_model.train import RewardModelInferencer
 
@@ -58,27 +62,33 @@ if __name__ == "__main__":
     from franka_env.envs.wrappers import SpacemouseIntervention
     from examples.experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 
-    env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
-    env = HumanRewardEnv(env)
-    env = SpacemouseIntervention(env)
-    env = RelativeFrame(env, include_relative_pose=False)
-    env = Quat2EulerWrapper(env)
-    env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
-    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+    env = UR_Platform_Env(fake_env=False, config=UREnvConfig())
+    # env = HumanRewardEnv(env)
+    # env = SpacemouseIntervention(env)
+    # env = RelativeFrame(env, include_relative_pose=False)
+    # env = Quat2EulerWrapper(env)
+    # env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
+    # env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
 
     # 包装成带奖励分类器的环境
     env = RewardClassifierWrapper(
         env=env,
-        multi=True,
-        model_path="/home/facelesswei/code/debug_UR_Robot_Arm_Show/reward_model/checkpoint_plug_multi/checkpoint-1.pth",
+        multi=False,
+        model_path="/home/facelesswei/code/hil-serl/checkpoints/single_image_model_epoch1.pth",
+        # model_path="/home/facelesswei/code/debug_UR_Robot_Arm_Show/reward_model/checkpoint_plug_multi/checkpoint-1.pth",
     )
-    for _ in range(10000):
-        action = env.action_space.sample()
-        action = np.zeros((7,))
-        obs, reward, terminated, truncated, info = env.step(action)
-        print(f"reward: {reward}")
+    action = env.action_space.sample()
+    action = np.zeros((7,))
+    obs, reward, terminated, truncated, info = env.step(action)
+    print(f"reward: {reward}")
 
-        if reward > 0:
-            print("succeed!")
-            time.sleep(1)
-            env.reset()
+    # for _ in range(10000):
+    #     action = env.action_space.sample()
+    #     action = np.zeros((7,))
+    #     obs, reward, terminated, truncated, info = env.step(action)
+    #     print(f"reward: {reward}")
+
+    #     if reward > 0:
+    #         print("succeed!")
+    #         time.sleep(1)
+    #         env.reset()

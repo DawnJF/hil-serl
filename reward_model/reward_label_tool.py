@@ -62,7 +62,7 @@ def modify_rewards(steps, mode, save_path, index=None):
 
 def main():
     # 设置 pkl 文件目录
-    folder_path = "/home/facelesswei/code/hil-serl/classifier_data/2025-09-10/"
+    folder_path = "/home/facelesswei/code/hil-serl/classifier_data/2025-09-11/"
     pkl_files = sorted(glob(os.path.join(folder_path, "*.pkl")))
 
     if not pkl_files:

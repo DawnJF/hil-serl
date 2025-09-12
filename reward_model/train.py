@@ -1,11 +1,16 @@
 import sys
 import os
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import models
+
 from sklearn.model_selection import train_test_split
 import numpy as np
 import pandas as pd
@@ -14,6 +19,7 @@ from PIL import Image
 from reward_model.net import ResNetClassifier
 from reward_model.pkl_utils import load_pkl_to_reward_model
 from utils.image_augmentations import get_eval_transform, get_train_transform
+from reward_model.pkl_utils import image_normalization
 
 
 # 示例数据集，假设每个样本有n张图片和一个标签
@@ -46,8 +52,24 @@ class ImageSequenceDataset(Dataset):
         return imgs, label
 
 
-def save_checkpoint(model, crop_dict, path):
-    torch.save({"model_state_dict": model.state_dict(), "crop_dict": crop_dict}, path)
+import os
+import torch
+
+
+def save_checkpoint_multi(model, save_dir, model_name="model", epoch=None):
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    # 生成文件名
+    if epoch is not None:
+        filename = f"{model_name}_epoch{epoch+1}.pth"
+    else:
+        filename = f"{model_name}.pth"
+
+    path = os.path.join(save_dir, filename)
+
+    # 保存模型 state_dict
+    torch.save({"model_state_dict": model.state_dict()}, path)
     print(f"Checkpoint saved to {path}")
 
 
@@ -78,9 +100,9 @@ def load_and_split_data(test_size=0.2, random_state=42):
     return train_images, test_images, train_labels, test_labels
 
 
-def test(model_path=MODEL_PATH):
+def test(model_path=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _, _, test_images, test_labels = load_to_reward_model()
+    _, test_images, _, test_labels = load_and_split_data()
     # _, _, test_images, test_labels = jax_load_to_reward_model()
     dataset = ImageSequenceDataset(
         test_images, test_labels, transform=image_normalization
@@ -110,15 +132,13 @@ def train(save_path="reward_model", model_path=None, epochs=10):
     print(f"Training samples: {len(train_images)}")
     print(f"Testing samples: {len(test_images)}")
 
-    crop_dict = {"top": 250, "left": 380, "height": 200, "width": 300}
-
     train_dataset = ImageSequenceDataset(
-        train_images, train_labels, transform=get_train_transform(crop_dict)
+        train_images, train_labels, transform=image_normalization
     )
     train_dataloader = DataLoader(train_dataset, batch_size=16, shuffle=True)
 
     test_dataset = ImageSequenceDataset(
-        test_images, test_labels, transform=get_eval_transform(crop_dict)
+        test_images, test_labels, transform=image_normalization
     )
     test_dataloader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
@@ -174,8 +194,11 @@ def train(save_path="reward_model", model_path=None, epochs=10):
         print(f"  Val Accuracy: {val_accuracy:.2f}% ({val_correct}/{val_total})")
         print("-" * 40)
 
-        os.makedirs(save_path, exist_ok=True)
-        save_checkpoint(model, crop_dict, f"{save_path}/checkpoint-{epoch+1}.pth")
+        save_checkpoint_multi(
+            model,
+            save_dir="/home/facelesswei/code/hil-serl/checkpoints",
+            model_name=f"single_image_model_epoch{epoch+1}",
+        )
 
 
 class RewardModelInferencer:
@@ -192,14 +215,17 @@ class RewardModelInferencer:
         np_imgs: numpy.ndarray, shape [N, C, H, W] or list of np.ndarray [C, H, W]
         返回: int, 预测类别
         """
+        imgs = []
+        # t = get_eval_transform(self.crop_dict)
 
-        t = get_eval_transform(self.crop_dict)
-
-        for i in images_list:
-            i = t(i)
-            imgs.append(torch.tensor(i, dtype=torch.float32))
+        for img in images_list:
+            # i = t(i)
+            img = image_normalization(img)
+            imgs.append(torch.tensor(img, dtype=torch.float32))
         imgs = torch.stack(imgs, dim=0)  # [N, C, H, W]
-
+        imgs = imgs.unsqueeze(0)  # [1, N, C, H, W]
+        if torch.cuda.is_available():
+            imgs = imgs.cuda()
         with torch.no_grad():
             outputs = self.model(imgs)  # [1, num_classes]
             probs = torch.softmax(outputs, dim=1)  # 转成概率
