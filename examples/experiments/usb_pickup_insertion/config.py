@@ -26,6 +26,7 @@ from experiments.usb_pickup_insertion.wrapper import (
     HumanRewardEnv,
     USBEnv,
     GripperPenaltyWrapper,
+    ImageTransformWrapper
 )
 from experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 
@@ -146,6 +147,54 @@ class UREnvConfig(DefaultEnvConfig):
         [np.array([-0.6, -0.6, 0.055]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
     MAX_EPISODE_LENGTH = 200
+    
+    # image transform configs
+    TFS = {
+        "brightness":{
+            "weight": 1.0,
+            "type": "ColorJitter",
+            "kwargs": {"brightness": [0.8, 1.2]}
+        },
+        "contrast": {
+            "weight": 1.0,
+            "type": "ColorJitter",
+            "kwargs": {"contrast": [0.8, 1.2]}
+        },
+        "saturation": {
+            "weight": 1.0,
+            "type": "ColorJitter",
+            "kwargs": {"saturation": [0.5, 1.5]}
+        },
+        "hue": {
+            "weight": 1.0,
+            "type": "ColorJitter",
+            "kwargs": {"hue": [-0.05, 0.05]}
+        },
+        "sharpness": {
+            "weight": 1.0,
+            "type": "SharpnessJitter",
+            "kwargs": {"sharpness": [0.5, 1.5]}
+        },
+        "translation":{
+            "weight": 1.0,
+            "type": "RandomAffine",
+            "kwargs": {"degrees": 0, "translate": (0.1, 0.1)}
+        },
+        "perspective":{
+            "weight": 1.0,
+            "type": "RandomPerspective",
+            "kwargs": {
+                "distortion_scale": 0.2,  # 中等变形强度，不破坏特征
+                "p": 0.5,                 # 50%概率应用，平衡多样性和稳定性
+                "fill": (0, 0, 0)         # 空白区域填黑色（根据你的数据集背景色调整）
+            }
+        }
+    }
+    MAX_NUM_TRANSFORMS = 7  # maximum number of transforms to apply
+    ENABLE_TRANSFORMS = True  # whether to enable image transforms
+    RANDOM_ORDER = True  # whether to apply transforms in random order
+    CAMERA_SECTIONS = ["wrist", "rgb"]
+    PROBABILITY = 0.5  # probability to apply image transforms
 
 
 class TrainConfig(DefaultTrainingConfig):
@@ -165,7 +214,7 @@ class TrainConfig(DefaultTrainingConfig):
     def get_environment(self, fake_env=False, save_video=False, classifier=False):
         # env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
         env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
-        env = HumanRewardEnv(env)
+        # env = HumanRewardEnv(env)
         if not fake_env:
             env = SpacemouseIntervention(env)
         env = RelativeFrame(env, include_relative_pose=False)
@@ -186,6 +235,7 @@ class TrainConfig(DefaultTrainingConfig):
 
         #     env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
         env = GripperPenaltyWrapper(env, penalty=-0.02)
+        env = ImageTransformWrapper(env, config=UREnvConfig())
         return env
 
 
@@ -207,13 +257,43 @@ def test_mouse():
 
 def test_images():
     from PIL import Image
+    import jax
+    if not hasattr(jax, "tree_map"):
+        jax.tree_map = jax.tree.map
+    if not hasattr(jax, "tree_leaves"):
+        jax.tree_leaves = jax.tree.leaves
+    
+    proprio_keys = ["tcp_pose", "gripper_pose"]
 
     env = UR_Platform_Env(fake_env=False, config=UREnvConfig())
+    env = RelativeFrame(env, include_relative_pose=False)
+    env = Quat2EulerWrapper(env)
+    env = SERLObsWrapper(env, proprio_keys=proprio_keys)
+    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+    env = GripperPenaltyWrapper(env, penalty=-0.02)
+    env = ImageTransformWrapper(
+        env,
+        config=UREnvConfig()
+    )
     env.reset()
     action = env.action_space.sample()
     obs, reward, done, truncated, info = env.step(action)
     print(obs.keys())
-    Image.fromarray(obs["images"]["rgb"]).save("outputs/test_rgb/rgb.png")
+
+    ##------ debug
+    rgb = obs["rgb"]
+    rgb_shape = rgb.shape
+    print("rgb_shape", rgb_shape)
+    print("rgb_type", type(rgb))
+
+    wrist = obs["wrist"]
+    wrist_shape = wrist.shape
+    print("wrist_shape", wrist_shape)
+    print("wrist_type", type(wrist))
+
+    ##------ debug
+    Image.fromarray(rgb.squeeze(0)).save("outputs/test_rgb/rgb.png")
+    Image.fromarray(wrist.squeeze(0)).save("outputs/test_rgb/wrist.png")
 
 
 def test_reward_model():
@@ -275,5 +355,5 @@ if __name__ == "__main__":
 
     # test_fake_Env()
     # test_mouse()
-    test_reward_model()
-    # test_images()
+    # test_reward_model()
+    test_images()
