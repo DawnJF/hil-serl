@@ -27,22 +27,25 @@ flags.DEFINE_integer("trajectories_needed", 500, "Number of trajectories to coll
 collecting = False  # 是否在采集轨迹
 start_collect = False
 stop_collect = False
+delete_last = False  # 按 d 删除上一次轨迹
 
 
 def on_press(key):
-    global start_collect, stop_collect
+    global start_collect, stop_collect, delete_last
     try:
         if hasattr(key, "char"):
-            if key.char == "a":  # 按 a 开始采集
+            if key.char == "a":
                 start_collect = True
-            elif key.char == "b":  # 按 b 停止采集并保存
+            elif key.char == "b":
                 stop_collect = True
+            elif key.char == "d":
+                delete_last = True
     except AttributeError:
         pass
 
 
 def main(_):
-    global collecting, start_collect, stop_collect
+    global collecting, start_collect, stop_collect, delete_last
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
 
@@ -63,6 +66,7 @@ def main(_):
     save_dir = os.path.join("./classifier_data", date_str)
     os.makedirs(save_dir, exist_ok=True)
 
+    # 获取已有文件编号，决定下次编号
     existing_files = [
         f
         for f in os.listdir(save_dir)
@@ -80,13 +84,28 @@ def main(_):
     else:
         start_idx = 1
 
-    saved_count = start_idx - 1  # 已保存数量
+    saved_count = start_idx - 1
     print(f"继续编号，从 {start_idx} 开始保存")
 
     # 进度条调整为剩余数量
     pbar = tqdm(total=trajectories_needed, initial=saved_count)
 
     while saved_count < trajectories_needed:
+        # 按 d 删除上一次轨迹
+        if delete_last:
+            if saved_count > 0:
+                prev_file = os.path.join(
+                    save_dir, f"{FLAGS.exp_name}_traj_{saved_count}.pkl"
+                )
+                if os.path.exists(prev_file):
+                    os.remove(prev_file)
+                    print(f"Deleted previous trajectory: {prev_file}")
+                    saved_count -= 1
+                    pbar.update(-1)
+            else:
+                print("No previous trajectory to delete")
+            delete_last = False
+
         actions = np.zeros(env.action_space.sample().shape)
         next_obs, rew, done, truncated, info = env.step(actions)
         if "intervene_action" in info:
@@ -117,11 +136,11 @@ def main(_):
         # 按 a → 开始采集
         if start_collect:
             if not collecting:
-                trajectory = []  # 清空旧的
+                trajectory = []
                 collecting = True
                 print("Start collecting new trajectory")
             trajectory.append(transition)
-            start_collect = False  # 重置标记
+            start_collect = False
 
         # 正在采集 → 每步都保存
         elif collecting:
@@ -149,7 +168,6 @@ def main(_):
                 print("环境重置成功")
             except Exception as e:
                 print(f"环境重置失败: {e}")
-                # 重新创建环境
                 env = config.get_environment(
                     fake_env=False, save_video=False, classifier=False
                 )
