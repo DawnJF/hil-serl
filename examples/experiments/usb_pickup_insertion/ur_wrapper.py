@@ -193,8 +193,10 @@ class UR_Platform_Env(gym.Env):
         reward = self.reward
         done = self.curr_path_length >= self.max_episode_length or reward
         if reward == 1:
-            print(f"[UR_Platform_Env]: reward 1")
+            print(f"\033[35m [UR_Platform_Env]: reward 1\033[0m")
         if self.curr_path_length >= self.max_episode_length:
+            # if executed time exceeds max length, give a -1 penalty.
+            reward = -1
             print(
                 f"\033[34m[UR_Platform_Env]: max_episode_length {self.max_episode_length}\033[0m"
             )
@@ -252,7 +254,7 @@ class UR_Platform_Env(gym.Env):
             arr = np.array(self._RESET_POSE).astype(np.float32)
             data = {"type": "jointreset", "arr": arr.tolist()}
             self.client.post(data)
-            time.sleep(3)
+            time.sleep(7)
             return
 
         # Perform Carteasian reset
@@ -308,12 +310,12 @@ class UR_Platform_Env(gym.Env):
     def _send_gripper_command(self, pos: float, mode="binary"):
         """Internal function to send gripper command to the robot."""
         # print(f"[DEBUG] _send_gripper_command {pos}")
-        # print(f"[DEBUG] _send_gripper_command self.currgripper: {self.currgripper}")
+        print(f"[DEBUG] _send_gripper_command pos:{pos} currgripper: {self.currgripper}")
         if mode == "binary":
             if (
                 (pos <= -0.5)
                 # and (self.currgripper > 0.85)
-                and (self.currgripper <= 0.25)
+                # and (self.currgripper <= 0.25)
                 and (time.time() - self.last_gripper_act > self.gripper_sleep)
             ):  # close gripper
                 self.client.post({"type": "close_gripper"})
@@ -322,7 +324,7 @@ class UR_Platform_Env(gym.Env):
             elif (
                 (pos >= 0.5)
                 # and (self.currgripper < 0.85)
-                and (self.currgripper > 0.25)
+                # and (self.currgripper > 0.25)
                 and (time.time() - self.last_gripper_act > self.gripper_sleep)
             ):  # open gripper
                 self.client.post({"type": "open_gripper"})

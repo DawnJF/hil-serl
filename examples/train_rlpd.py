@@ -387,6 +387,8 @@ def main(_):
             image_keys=config.image_keys,
             encoder_type=config.encoder_type,
             discount=config.discount,
+            max_steps=config.max_steps,
+            if_schedule_lr=True
         )
         include_grasp_penalty = True
     elif config.setup_mode == "dual-arm-learned-gripper":
@@ -486,7 +488,7 @@ def main(_):
 
         # learner loop
         print_green("starting learner loop")
-        agent.bc_agent = None
+        # agent.bc_agent = None
         learner(
             sampling_rng,
             agent,

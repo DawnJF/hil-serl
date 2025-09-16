@@ -523,6 +523,18 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         model_def = ModuleDict(networks)
 
         # Define optimizers
+        # set optimizers' params
+        if_schedule_lr = kwargs.get("if_schedule_lr", False)
+        max_steps = kwargs.get("max_steps", 100000)
+        if if_schedule_lr:
+            additional_kwargs = {
+                "warmup_steps": max_steps * 0.5 / 100,
+                "cosine_decay_steps": max_steps,
+            }
+            actor_optimizer_kwargs.update(additional_kwargs)
+            critic_optimizer_kwargs.update(additional_kwargs)
+            grasp_critic_optimizer_kwargs.update(additional_kwargs)
+            temperature_optimizer_kwargs.update(additional_kwargs)
         txs = {
             "actor": make_optimizer(**actor_optimizer_kwargs),
             "critic": make_optimizer(**critic_optimizer_kwargs),

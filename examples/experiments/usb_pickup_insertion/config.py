@@ -214,7 +214,7 @@ class TrainConfig(DefaultTrainingConfig):
     def get_environment(self, fake_env=False, save_video=False, classifier=False):
         # env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
         env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
-        # env = HumanRewardEnv(env)
+        env = HumanRewardEnv(env)
         if not fake_env:
             env = SpacemouseIntervention(env)
         env = RelativeFrame(env, include_relative_pose=False)
@@ -235,7 +235,7 @@ class TrainConfig(DefaultTrainingConfig):
 
         #     env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
         env = GripperPenaltyWrapper(env, penalty=-0.02)
-        env = ImageTransformWrapper(env, config=UREnvConfig())
+        # env = ImageTransformWrapper(env, config=UREnvConfig())
         return env
 
 
@@ -310,10 +310,9 @@ def test_reward_model():
         action = env.action_space.sample()
         action = np.zeros((7,))
         obs, reward, done, truncated, info = env.step(action)
-        if reward:
-            print(f"\033 Reward: {reward}\033[0m")
-            env.reset()
-        elif done:
+        print(f"Reward: {reward}")
+        print(f"Done: {done}")
+        if done:
             env.reset()
 
 
@@ -355,5 +354,5 @@ if __name__ == "__main__":
 
     # test_fake_Env()
     # test_mouse()
-    # test_reward_model()
-    test_images()
+    test_reward_model()
+    # test_images()

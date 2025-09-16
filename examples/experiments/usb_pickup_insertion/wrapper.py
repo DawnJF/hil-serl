@@ -8,7 +8,6 @@ import copy
 import gymnasium as gym
 import time
 from franka_env.envs.franka_env import FrankaEnv
-from pynput import keyboard
 
 # for image transformation
 from torchvision.transforms import v2
@@ -156,8 +155,11 @@ class HumanRewardEnv(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
 
+        from pynput import keyboard
+
         self.success_key = False
         self.failure_key = False
+        self.collision_key = False
 
         def on_press(key):
             try:
@@ -165,6 +167,8 @@ class HumanRewardEnv(gym.Wrapper):
                     self._set_success()
                 elif str(key) == "Key.enter":
                     self._set_failure()
+                elif str(key) == "Key.alt_r":
+                    self._set_collision()
             except AttributeError:
                 pass
 
@@ -172,15 +176,22 @@ class HumanRewardEnv(gym.Wrapper):
         listener.start()
 
     def _set_success(self):
+        # Light Green font
         print("\033[92m Success Key Pressed\033[0m")
         self.success_key = True
     
     def _set_failure(self):
+        # light red font
         print("\033[91m Faliure Key Pressed\033[0m")
         self.failure_key = True
+    
+    def _set_collision(self):
+        # light yellow font
+        print("\033[93m Collision Key Pressed\033[0m")
+        self.collision_key = True
 
     def step(self, action):
-        obs, _, done, truncated, info = self.env.step(action)
+        obs, reward, done, truncated, info = self.env.step(action)
 
         if self.success_key:
             reward = 1.0
@@ -188,11 +199,15 @@ class HumanRewardEnv(gym.Wrapper):
             self.success_key = False
             done = True
         elif self.failure_key:
-            reward = 0.0
+            reward = -1.0
             self.failure_key = False
             done = True
+        elif self.collision_key:
+            reward = -0.2
+            self.collision_key = False
+            done = False
         else:
-            reward = 0.0
+            reward = 0.0 if int(reward) == 0 else reward
 
         return obs, reward, done, truncated, info
 

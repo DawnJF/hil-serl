@@ -101,6 +101,8 @@ def make_sac_pixel_agent_hybrid_single_arm(
     reward_bias=0.0,
     target_entropy=None,
     discount=0.97,
+    max_steps=1000000,
+    if_schedule_lr=False
 ):
     agent = SACAgentHybridSingleArm.create_pixels(
         jax.random.PRNGKey(seed),
@@ -138,6 +140,8 @@ def make_sac_pixel_agent_hybrid_single_arm(
         reward_bias=reward_bias,
         target_entropy=target_entropy,
         augmentation_function=make_batch_augmentation_func(image_keys),
+        max_steps=max_steps,
+        if_schedule_lr=if_schedule_lr
     )
     return agent
 
