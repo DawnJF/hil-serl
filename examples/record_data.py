@@ -59,7 +59,7 @@ def main(_):
     config = CONFIG_MAPPING[FLAGS.exp_name]()
     env = config.get_environment(fake_env=False, save_video=False, classifier=False)
 
-    obs, _ = env.reset()
+    obs, info = env.reset()
     trajectories_needed = FLAGS.trajectories_needed
 
     trajectory = []  # 当前一条轨迹
@@ -132,6 +132,7 @@ def main(_):
                 rewards=rew,
                 masks=1.0 - done,
                 dones=done,
+                infos=info,
             )
         )
         obs = next_obs
@@ -167,20 +168,20 @@ def main(_):
 
             # 确保环境重置
             try:
-                obs, _ = env.reset()
+                obs, info = env.reset()
                 print("环境重置成功")
             except Exception as e:
                 print(f"环境重置失败: {e}")
                 env = config.get_environment(
                     fake_env=False, save_video=False, classifier=False
                 )
-                obs, _ = env.reset()
+                obs, info = env.reset()
 
             print("====================收集了一条数据")
 
         # 如果环境结束 → reset
         if done or truncated:
-            obs, _ = env.reset()
+            obs, info = env.reset()
             print("环境自然结束，已重置")
 
     print(f"Finished! Saved {saved_count} trajectories in {save_dir}")
