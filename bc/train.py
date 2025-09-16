@@ -222,38 +222,37 @@ def train(args: Args, epochs=10):
         save_checkpoint(model, path=cp_name)
 
 
-class RewardModelInferencer:
-    def __init__(self, model_path, threshold=0.7):
-        self.threshold = threshold
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = ResNetClassifier().to(self.device)
-        self.crop_dict = load_checkpoint(self.model, path=model_path)
-        print(f"Using crop: {self.crop_dict}")
+class ActorWrapper:
+    def __init__(self, model_path):
+        self.device = get_device()
+        self.model = BCActor(Args()).to(self.device)
+        load_checkpoint(self.model, path=model_path)
         self.model.eval()
 
-    def predict(self, images_list):
-        """
-        np_imgs: numpy.ndarray, shape [N, C, H, W] or list of np.ndarray [C, H, W]
-        返回: int, 预测类别
-        """
-        imgs = []
-        # t = get_eval_transform(self.crop_dict)
+    def predict(self, obs):
+        state = obs["state"]
+        rgb = obs["rgb"]
+        wrist = obs["wrist"]
 
-        for img in images_list:
-            # i = t(i)
-            img = image_normalization(img)
-            imgs.append(torch.tensor(img, dtype=torch.float32))
+        imgs = []
+
+        img_transform = get_eval_transform()
+
+        for img in [rgb, wrist]:
+            img = img_transform(img)
+            imgs.append(img)
         imgs = torch.stack(imgs, dim=0)  # [N, C, H, W]
         imgs = imgs.unsqueeze(0)  # [1, N, C, H, W]
-        if torch.cuda.is_available():
-            imgs = imgs.cuda()
-        with torch.no_grad():
-            outputs = self.model(imgs)  # [1, num_classes]
-            probs = torch.softmax(outputs, dim=1)  # 转成概率
-            p1 = probs[0, 1].item()  # 类别 1 的概率
 
-            print(f"predict: {p1:.4f}: {p1 > self.threshold}")
-            return 1 if p1 > self.threshold else 0
+        imgs = imgs.to(self.device)
+        state = torch.tensor(state, dtype=torch.float32).to(self.device)
+        with torch.no_grad():
+            action = self.model(state, imgs)
+
+        np_action = action.cpu().numpy().squeeze()
+        print(f"Predicted action: {np_action}")
+
+        return np_action
 
 
 if __name__ == "__main__":
