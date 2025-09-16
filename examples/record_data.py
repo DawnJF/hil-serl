@@ -1,3 +1,6 @@
+# 需要把环境中reset的time.sleep()注释一下   推理脚本不使用reward
+# /home/facelesswei/code/hil-serl/examples/experiments/usb_pickup_insertion/config.py  MAX_EPISODE_LENGTH = 200改为10000000
+
 import jax
 import time
 

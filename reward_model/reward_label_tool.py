@@ -3,6 +3,7 @@ import numpy as np
 import os
 from glob import glob
 import matplotlib.pyplot as plt
+from natsort import natsorted
 
 
 def show_frame(steps, frame_idx, close_key="b"):
@@ -52,6 +53,7 @@ def modify_rewards(steps, mode, save_path, index=None):
 
         for i, s in enumerate(steps):
             s["rewards"] = 0 if i < index else 1
+            s["dones"] = False if i < index else 1
 
     print("修改后的前几个 rewards:", [s["rewards"] for s in steps[:10]], "...")
 
@@ -62,8 +64,10 @@ def modify_rewards(steps, mode, save_path, index=None):
 
 def main():
     # 设置 pkl 文件目录
-    folder_path = "/home/facelesswei/code/hil-serl/classifier_data/2025-09-11/"
+    folder_path = "/home/facelesswei/code/hil-serl/classifier_data/demo/"
     pkl_files = sorted(glob(os.path.join(folder_path, "*.pkl")))
+
+    pkl_files = natsorted(pkl_files)
 
     if not pkl_files:
         print("目录下没有 pkl 文件")
@@ -91,7 +95,7 @@ def main():
                     modify_rewards(steps, parts, save_path)
                     break
                 elif parts == "01":
-                    idx = input("请输入分割索引 index: ")
+                    idx = input("请输入分割索引 index（开始成功的帧数）: ")
                     modify_rewards(steps, "01", save_path, idx)
                     break
                 else:
