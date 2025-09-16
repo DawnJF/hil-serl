@@ -3,6 +3,7 @@
 import glob
 import time
 import jax
+
 if not hasattr(jax, "tree_map"):
     jax.tree_map = jax.tree.map
 if not hasattr(jax, "tree_leaves"):
@@ -47,7 +48,6 @@ flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_string("checkpoint_path", None, "Path to save checkpoints.")
-flags.DEFINE_integer("eval_checkpoint_step", 0, "Step to evaluate the checkpoint.")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_boolean("save_video", False, "Save video.")
 
@@ -67,54 +67,27 @@ def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
 
 
+def select_action(actions, bc_agent, obs, client):
+    if bc_agent is None:
+        return actions
+
+    bc_actions = bc_agent(obs["state"])
+    result = client.request(
+        "request-q", {"actions": actions, "bc_actions": bc_actions, "obs": obs}
+    )
+    if result["select_bc"]:
+        return bc_actions
+    else:
+        return actions
+
+
 ##############################################################################
 
 
-def actor(agent, data_store, intvn_data_store, env, sampling_rng):
+def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None):
     """
     This is the actor loop, which runs when "--actor" is set to True.
     """
-    if FLAGS.eval_checkpoint_step:
-        success_counter = 0
-        time_list = []
-
-        ckpt = checkpoints.restore_checkpoint(
-            os.path.abspath(FLAGS.checkpoint_path),
-            agent.state,
-            step=FLAGS.eval_checkpoint_step,
-        )
-        agent = agent.replace(state=ckpt)
-
-        for episode in range(FLAGS.eval_n_trajs):
-            obs, _ = env.reset()
-            done = False
-            start_time = time.time()
-            while not done:
-                sampling_rng, key = jax.random.split(sampling_rng)
-                actions = agent.sample_actions(
-                    observations=jax.device_put(obs),
-                    argmax=False,
-                    seed=key
-                )
-                actions = np.asarray(jax.device_get(actions))
-
-                next_obs, reward, done, truncated, info = env.step(actions)
-                obs = next_obs
-
-                if done:
-                    if reward:
-                        dt = time.time() - start_time
-                        time_list.append(dt)
-                        print(dt)
-
-                    success_counter += reward
-                    print(reward)
-                    print(f"{success_counter}/{episode + 1}")
-
-        print(f"success rate: {success_counter / FLAGS.eval_n_trajs}")
-        print(f"average time: {np.mean(time_list)}")
-        return  # after done eval, return and exit
-    
     start_step = (
         int(os.path.basename(natsorted(glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")))[-1])[12:-4]) + 1
         if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path)
@@ -169,6 +142,7 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng):
                     seed=key,
                     argmax=False,
                 )
+                actions = select_action(actions, bc_agent, obs, client)
                 actions = np.asarray(jax.device_get(actions))
 
         # Step environment
@@ -262,9 +236,21 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
 
     def stats_callback(type: str, payload: dict) -> dict:
         """Callback for when server receives stats request."""
-        assert type == "send-stats", f"Invalid request type: {type}"
-        if wandb_logger is not None:
-            wandb_logger.log(payload, step=step)
+
+        if type == "send-stats":
+            if wandb_logger is not None:
+                wandb_logger.log(payload, step=step)
+        elif type == "request-q":
+            actions = payload["actions"]
+            bc_actions = payload["bc_actions"]
+            obs = payload["obs"]
+            q = agent.forward_critic_eval(obs, actions)
+            bc_q = agent.forward_critic_eval(obs, bc_actions)
+            if bc_q > q:
+                return {"select_bc": True}
+        else:
+            raise ValueError(f"Invalid request type: {type}")
+
         return {}  # not expecting a response
 
     # Create server
@@ -309,7 +295,7 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
 
     # wait till the replay buffer is filled with enough data
     timer = Timer()
-    
+
     if isinstance(agent, SACAgent):
         train_critic_networks_to_update = frozenset({"critic"})
         train_networks_to_update = frozenset({"critic", "actor", "temperature"})
@@ -393,7 +379,7 @@ def main(_):
             discount=config.discount,
         )
         include_grasp_penalty = False
-    elif config.setup_mode == 'single-arm-learned-gripper':
+    elif config.setup_mode == "single-arm-learned-gripper":  # this
         agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
             seed=FLAGS.seed,
             sample_obs=env.observation_space.sample(),
@@ -403,7 +389,7 @@ def main(_):
             discount=config.discount,
         )
         include_grasp_penalty = True
-    elif config.setup_mode == 'dual-arm-learned-gripper':
+    elif config.setup_mode == "dual-arm-learned-gripper":
         agent: SACAgentHybridDualArm = make_sac_pixel_agent_hybrid_dual_arm(
             seed=FLAGS.seed,
             sample_obs=env.observation_space.sample(),
@@ -418,9 +404,7 @@ def main(_):
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
-    agent = jax.device_put(
-        jax.tree_map(jnp.array, agent), sharding.replicate()
-    )
+    agent = jax.device_put(jax.tree_map(jnp.array, agent), sharding.replicate())
 
     if FLAGS.checkpoint_path is not None and os.path.exists(FLAGS.checkpoint_path):
         input("Checkpoint path already exists. Press Enter to resume training.")
@@ -502,6 +486,7 @@ def main(_):
 
         # learner loop
         print_green("starting learner loop")
+        agent.bc_agent = None
         learner(
             sampling_rng,
             agent,

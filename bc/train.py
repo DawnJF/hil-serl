@@ -101,7 +101,7 @@ class ImagesActionDataset(Dataset):
 
 def save_checkpoint(model, path):
     torch.save({"model_state_dict": model.state_dict()}, path)
-    print(f"Checkpoint saved to {path}")
+    logging.info(f"Checkpoint saved to {path}")
 
 
 def load_checkpoint(model, path):

@@ -33,6 +33,41 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
     state: JaxRLTrainState
     config: dict = nonpytree_field()
 
+    def forward_critic_eval(
+        self,
+        observations: Data,
+        actions: jax.Array,
+    ) -> jax.Array:
+        """
+        Forward pass for critic network in evaluation mode.
+        """
+        return self.forward_critic(
+            observations, 
+            actions, 
+            rng=None, 
+            grad_params=None, 
+            train=False
+        )
+
+    def select_max_q(self, target_next_qs, obs, rng):
+        if self.bc_agent is None:
+            return target_next_qs
+
+        bc_next_actions = self.bc_agent(obs["state"])
+        bc_target_next_qs = self.forward_target_critic(
+            obs,
+            bc_next_actions,
+            rng=rng,
+        )
+        bc_target_next_min_q = bc_target_next_qs.min(axis=0)
+
+        # select max q between sac and bc
+        select_idcs = bc_target_next_min_q > target_next_qs
+        chex.assert_shape(select_idcs, (target_next_qs.shape,))
+        selected_next_qs = jnp.where(select_idcs, bc_target_next_min_q, target_next_qs)
+        chex.assert_shape(selected_next_qs, (target_next_qs.shape,))
+        return selected_next_qs
+
     def forward_critic(
         self,
         observations: Data,
@@ -70,7 +105,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         return self.forward_critic(
             observations, actions, rng=rng, grad_params=self.state.target_params
         )
-    
+
     def forward_grasp_critic(
         self,
         observations: Data,
@@ -160,7 +195,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         next_action_distributions = self.forward_policy(
             batch["next_observations"], rng=rng
         )
-        
+
         next_actions, next_actions_log_probs = next_action_distributions.sample_and_log_prob(seed=rng)
         chex.assert_shape(next_actions_log_probs, (batch_size,))
 
@@ -184,7 +219,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             rng=rng,
         )  # (critic_ensemble_size, batch_size)
 
-        # Subsample if requested
+        # Subsample if requested [Noop]
         if self.config["critic_subsample_size"] is not None:
             rng, subsample_key = jax.random.split(rng)
             subsample_idcs = jax.random.randint(
@@ -197,6 +232,10 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
 
         # Minimum Q across (subsampled) ensemble members
         target_next_min_q = target_next_qs.min(axis=0)
+
+        target_next_min_q = self.select_max_q(
+            target_next_min_q, batch["next_observations"], rng
+        )
         chex.assert_shape(target_next_min_q, (batch_size,))
 
         target_q = (
@@ -205,7 +244,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         )
         chex.assert_shape(target_q, (batch_size,))
 
-        if self.config["backup_entropy"]:
+        if self.config["backup_entropy"]: # [Noop]
             temperature = self.forward_temperature()
             target_q = target_q - temperature * next_actions_log_probs
 
@@ -228,7 +267,6 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         }
 
         return critic_loss, info
-    
 
     def grasp_critic_loss_fn(self, batch, params: Params, rng: PRNGKey):
         """classes that inherit this class can change this function"""
@@ -236,7 +274,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         batch_size = batch["rewards"].shape[0]
         grasp_action = jnp.round(batch["actions"][..., -1]).astype(jnp.int16) + 1 # Cast env action from [-1, 1] to {0, 1, 2}
 
-         # Evaluate next grasp Qs for all ensemble members (cheap because we're only doing the forward pass)
+        # Evaluate next grasp Qs for all ensemble members (cheap because we're only doing the forward pass)
         target_next_grasp_qs = self.forward_target_grasp_critic(
             batch["next_observations"],
             rng=rng,
@@ -251,7 +289,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         # For DQN, select actions using online network, evaluate with target network
         best_next_grasp_action = next_grasp_qs.argmax(axis=-1) 
         chex.assert_shape(best_next_grasp_action, (batch_size,))
-        
+
         target_next_grasp_q = target_next_grasp_qs[jnp.arange(batch_size), best_next_grasp_action]
         chex.assert_shape(target_next_grasp_q, (batch_size,))
 
@@ -270,11 +308,11 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             grad_params=params
         )
         chex.assert_shape(predicted_grasp_qs, (batch_size, 3))
-        
+
         # Select the predicted Q-values for the taken grasp actions in the batch
         predicted_grasp_q = predicted_grasp_qs[jnp.arange(batch_size), grasp_action]
         chex.assert_shape(predicted_grasp_q, (batch_size,))
-        
+
         # Compute MSE loss between predicted and target Q-values
         chex.assert_equal_shape([predicted_grasp_q, target_grasp_q])
         grasp_critic_loss = jnp.mean((predicted_grasp_q - target_grasp_q) ** 2)
@@ -287,7 +325,6 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         }
 
         return grasp_critic_loss, info
-
 
     def policy_loss_fn(self, batch, params: Params, rng: PRNGKey):
         batch_size = batch["rewards"].shape[0]
@@ -331,7 +368,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             grad_params=params,
         )
         return temperature_loss, {"temperature_loss": temperature_loss}
-    
+
     def loss_fns(self, batch):
         return {
             "critic": partial(self.critic_loss_fn, batch),
@@ -429,10 +466,10 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             ee_actions = dist.mode()
         else:
             ee_actions = dist.sample(seed=seed)
-        
+
         seed, grasp_key = jax.random.split(seed, 2)
         grasp_q_values = self.forward_grasp_critic(observations, rng=grasp_key, train=False)
-        
+
         # Select grasp actions based on the grasp Q-values
         grasp_action = grasp_q_values.argmax(axis=-1)
         grasp_action = grasp_action - 1 # Mapping back to {-1, 0, 1}
@@ -625,12 +662,12 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         critic_def = partial(
             Critic, encoder=encoders["critic"], network=critic_backbone
         )(name="critic")
-        
+
         grasp_critic_backbone = MLP(**grasp_critic_network_kwargs)
         grasp_critic_def = partial(
             GraspCritic, encoder=encoders["grasp_critic"], network=grasp_critic_backbone
         )(name="grasp_critic")
-        
+
         policy_def = Policy(
             encoder=encoders["actor"],
             network=MLP(**policy_network_kwargs),
