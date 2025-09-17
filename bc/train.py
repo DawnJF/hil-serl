@@ -26,19 +26,18 @@ from utils.tools import get_device, setup_logging
 @dataclass
 class Args:
     output_dir: str = "outputs/bc"
-    dataset_path: str = (
-        "/Users/majianfei/Downloads/usb_pickup_insertion_30_11-50-21.pkl"
-    )
+    dataset_path: str = None
     model_path: str = None
 
     image_shape: int = 128
     action_dim: int = 4
     image_num: int = 2  # 输入图像数量
     state_dim: int = 7
-    
-    # Tensorboard相关配置
-    tensorboard_port: int = 6006  # Tensorboard端口
+
     log_interval: int = 10  # 每多少个batch记录一次详细指标
+    print_action_interval: int = 50
+
+    use_gripper_mapping: bool = True  # 控制是否使用抓爪映射
 
 
 def get_train_transform():
@@ -77,10 +76,12 @@ class ImagesActionDataset(Dataset):
         self,
         data_list,
         transform,
+        use_gripper_mapping: bool = True,  # 控制是否使用抓爪映射
     ):
 
         self.transform = transform
         self.data = data_list
+        self.use_gripper_mapping = use_gripper_mapping
 
     def __len__(self):
         return len(self.data)
@@ -99,9 +100,22 @@ class ImagesActionDataset(Dataset):
         state = state.squeeze()
         state = torch.tensor(state, dtype=torch.float32)
 
-        label = self.data[idx]["actions"]
-        label = torch.tensor(label, dtype=torch.float32)
-        return imgs, state, label
+        original_label = self.data[idx]["actions"]
+        original_label = torch.tensor(original_label, dtype=torch.float32)
+
+        # 创建映射后的label，不修改原始label
+        if self.use_gripper_mapping:
+            mapped_label = original_label.clone()  # 创建副本
+
+            # 将state的第0维映射到[-1, 1]范围作为gripper状态
+            gripper_state = (
+                state[0].item() if isinstance(state, torch.Tensor) else state[0]
+            )
+            mapped_label[-1] = gripper_state  # in [0,1]
+        else:
+            mapped_label = original_label
+
+        return imgs, state, mapped_label, original_label
 
 
 def save_checkpoint(model, path):
@@ -116,31 +130,31 @@ def load_checkpoint(model, path):
     return checkpoint.get("crop_dict", None)
 
 
-def test(model_path=None):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _, test_images, _, test_labels = load_and_split_data()
-    # _, _, test_images, test_labels = jax_load_to_reward_model()
-    dataset = ImageSequenceDataset(
-        test_images, test_labels, transform=image_normalization
-    )
-    dataloader = DataLoader(dataset, batch_size=16, shuffle=False)
-    model = ResNetClassifier().to(device)
-    load_checkpoint(model, path=model_path)
-    model.eval()
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for imgs, labels in dataloader:
-            imgs, labels = imgs.to(device), labels.to(device)
-            outputs = model(imgs)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    accuracy = 100 * correct / total
-    print(f"Test Accuracy: {accuracy:.2f}% ({correct}/{total})")
+# def test(model_path=None):
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     _, test_images, _, test_labels = load_and_split_data()
+#     # _, _, test_images, test_labels = jax_load_to_reward_model()
+#     dataset = ImageSequenceDataset(
+#         test_images, test_labels, transform=image_normalization
+#     )
+#     dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
+#     model = ResNetClassifier().to(device)
+#     load_checkpoint(model, path=model_path)
+#     model.eval()
+#     correct = 0
+#     total = 0
+#     with torch.no_grad():
+#         for imgs, labels in dataloader:
+#             imgs, labels = imgs.to(device), labels.to(device)
+#             outputs = model(imgs)
+#             _, predicted = torch.max(outputs.data, 1)
+#             total += labels.size(0)
+#             correct += (predicted == labels).sum().item()
+#     accuracy = 100 * correct / total
+#     print(f"Test Accuracy: {accuracy:.2f}% ({correct}/{total})")
 
 
-def load_and_split_data():
+def load_and_split_data(use_gripper_mapping=True):
     mapping = {
         "observations:rgb": "image1",
         "observations:wrist": "image2",
@@ -149,29 +163,30 @@ def load_and_split_data():
     }
 
     data_list = []
-    
+
     # 定义要加载的文件列表
     data_files = [
         "/home/chen/Projects/hil-serl/usb_pickup_insertion_30_11-50-21.pkl",
-        # classifier_data 子目录中的文件 
+        # classifier_data 子目录中的文件
         "/home/chen/Projects/hil-serl/classifier_data/2025-09-12/*.pkl",
         "/home/chen/Projects/hil-serl/classifier_data/2025-09-12-13/*.pkl",
         "/home/chen/Projects/hil-serl/classifier_data/2025-09-15/*.pkl",
     ]
-    
+
     total_added = 0
-    
+
     for file_pattern in data_files:
         # 处理通配符模式
-        if '*' in file_pattern:
+        if "*" in file_pattern:
             # 使用 glob 查找匹配的文件
             import glob
+
             matched_files = glob.glob(file_pattern)
-            
+
             if not matched_files:
                 logging.warning(f"没有找到匹配的文件: {file_pattern}")
                 continue
-                
+
             for file_path in matched_files:
                 try:
                     file_data = load_pkl(file_path, mapping)
@@ -185,7 +200,7 @@ def load_and_split_data():
             if not os.path.exists(file_pattern):
                 logging.warning(f"文件不存在，跳过: {file_pattern}")
                 continue
-                
+
             try:
                 file_data = load_pkl(file_pattern, mapping)
                 data_list.extend(file_data)
@@ -199,16 +214,24 @@ def load_and_split_data():
     logging.info(f"Training samples: {len(train_data)}")
     logging.info(f"Testing samples: {len(test_data)}")
 
-    train_dataset = ImagesActionDataset(train_data, transform=get_train_transform())
-    train_dataloader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    train_dataset = ImagesActionDataset(
+        train_data,
+        transform=get_train_transform(),
+        use_gripper_mapping=use_gripper_mapping,
+    )
+    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
 
-    test_dataset = ImagesActionDataset(test_data, transform=get_eval_transform())
-    test_dataloader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+    test_dataset = ImagesActionDataset(
+        test_data,
+        transform=get_eval_transform(),
+        use_gripper_mapping=use_gripper_mapping,
+    )
+    test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
     return train_dataloader, test_dataloader
 
 
-def train(args: Args, epochs=10):
+def train(args: Args, epochs=200):
     device = get_device()
 
     args.output_dir = f"{args.output_dir}_" + time.strftime("%Y%m%d_%H%M%S")
@@ -219,7 +242,9 @@ def train(args: Args, epochs=10):
     tensorboard_dir = os.path.join(args.output_dir, "tensorboard")
     writer = SummaryWriter(tensorboard_dir)
 
-    train_dataloader, test_dataloader = load_and_split_data()
+    train_dataloader, test_dataloader = load_and_split_data(
+        use_gripper_mapping=args.use_gripper_mapping
+    )
 
     model = BCActor(args).to(device)
 
@@ -228,17 +253,23 @@ def train(args: Args, epochs=10):
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-5)
-    
+
     global_step = 0
     for epoch in range(epochs):
         # 训练阶段
         model.train()
         total_loss = 0.0
 
-        for batch_idx, (imgs, state, action) in tqdm(enumerate(train_dataloader)):
-            imgs, state, action = imgs.to(device), state.to(device), action.to(device)
+        for batch_idx, (imgs, state, mapped_action, original_action) in tqdm(
+            enumerate(train_dataloader)
+        ):
+            imgs, state, mapped_action = (
+                imgs.to(device),
+                state.to(device),
+                mapped_action.to(device),
+            )
             predicted = model(state, imgs)  # [B, num_classes]action
-            loss = criterion(predicted, action)
+            loss = criterion(predicted, mapped_action)
 
             optimizer.zero_grad()
             loss.backward()
@@ -246,11 +277,26 @@ def train(args: Args, epochs=10):
 
             total_loss += loss.item()
             global_step += 1
-            
+
             # 记录每步的损失和epoch信息
             if batch_idx % args.log_interval == 0:
-                writer.add_scalar('Loss/Step', loss.item(), global_step)
-                writer.add_scalar('Epoch/Step', epoch, global_step)
+                writer.add_scalar("Loss/Step", loss.item(), global_step)
+                writer.add_scalar("Epoch/Step", epoch, global_step)
+
+            # 打印预测的action
+            if batch_idx % args.print_action_interval == 0:
+                # 打印第一个样本的预测结果和真实值
+                pred_action = predicted[0].detach().cpu().numpy()
+                true_mapped_action = mapped_action[0].detach().cpu().numpy()
+                true_original_action = original_action[0].detach().cpu().numpy()
+                state_values = state[0].detach().cpu().numpy()
+
+                print(f"\nBatch {batch_idx}, Step {global_step}:")
+                print(f"State:              {state_values}")
+                print(f"Predicted action:    {pred_action}")
+                print(f"Mapped true action:  {true_mapped_action}")
+                print(f"Original true action:{true_original_action}")
+                print(f"Loss: {loss.item():.6f}")
 
         # 计算训练集平均损失和成功率
         avg_loss = total_loss / len(train_dataloader)
@@ -259,21 +305,22 @@ def train(args: Args, epochs=10):
         model.eval()
 
         val_loss = 0.0
+
         with torch.no_grad():
-            for imgs, state, action in test_dataloader:
-                imgs, state, action = (
+            for imgs, state, mapped_action, original_action in test_dataloader:
+                imgs, state, mapped_action = (
                     imgs.to(device),
                     state.to(device),
-                    action.to(device),
+                    mapped_action.to(device),
                 )
                 outputs = model(state, imgs)
+                val_loss += criterion(outputs, mapped_action).item()
 
-                val_loss += criterion(outputs, action).item()
         val_loss /= len(test_dataloader)
 
-        writer.add_scalar('Loss/Train_Epoch', avg_loss, epoch)
-        writer.add_scalar('Loss/Val_Epoch', val_loss, epoch)
-        
+        writer.add_scalar("Loss/Train_Epoch", avg_loss, epoch)
+        writer.add_scalar("Loss/Val_Epoch", val_loss, epoch)
+
         logging.info(f"Epoch {epoch+1}/{epochs}:")
         logging.info(f"  Train Loss: {avg_loss:.4f}")
         logging.info(f"  Val Loss: {val_loss:.4f}")
@@ -289,9 +336,12 @@ def train(args: Args, epochs=10):
 class ActorWrapper:
     def __init__(self, model_path):
         self.device = get_device()
-        self.model = BCActor(Args()).to(self.device)
+        args = Args()
+        self.model = BCActor(args).to(self.device)
         load_checkpoint(self.model, path=model_path)
         self.model.eval()
+        self.last_predicted_gripper = 0
+        self.use_gripper_mapping = args.use_gripper_mapping
 
     def predict(self, obs):
         state = obs["state"]
@@ -314,6 +364,29 @@ class ActorWrapper:
             action = self.model(state, imgs)
 
         np_action = action.cpu().numpy().squeeze()
+
+        """
+        np_action[-1] in [0,1]
+        """
+
+        # 只有在启用抓爪映射时才进行后处理
+        if self.use_gripper_mapping:
+            predicted_gripper = np_action[-1]
+            if (
+                predicted_gripper < 0.5
+                and predicted_gripper != self.last_predicted_gripper
+            ):
+                np_action[-1] = 1.0  # 打开
+            elif (
+                predicted_gripper >= 0.5
+                and predicted_gripper != self.last_predicted_gripper
+            ):
+                np_action[-1] = -1.0  # 闭合
+            else:
+                np_action[-1] = 0
+
+            self.last_predicted_gripper = predicted_gripper
+
         print(f"Predicted action: {np_action}")
 
         return np_action
