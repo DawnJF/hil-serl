@@ -46,6 +46,7 @@ flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_boolean("learner", False, "Whether this is a learner.")
 flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
+flags.DEFINE_integer("port", 5588, "port")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_string("checkpoint_path", "outputs/debug", "Path to save checkpoints.")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
@@ -71,9 +72,11 @@ def select_action(actions, bc_agent, obs, client):
     if bc_agent is None:
         return actions
 
+    xyz = actions[:3]
     bc_actions = bc_agent(obs["state"])
+    bc_xyz = bc_actions[:3]
     result = client.request(
-        "request-q", {"actions": actions, "bc_actions": bc_actions, "obs": obs}
+        "request-q", {"actions": xyz, "bc_actions": bc_xyz, "obs": obs}
     )
     if result["select_bc"]:
         return bc_actions
@@ -102,10 +105,10 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
     client = TrainerClient(
         "actor_env",
         FLAGS.ip,
-        make_trainer_config(),
+        make_trainer_config(port_number=FLAGS.port, broadcast_port=FLAGS.port + 1),
         data_stores=datastore_dict,
         wait_for_server=True,
-        timeout_ms=3000,
+        timeout_ms=10000,
     )
 
     # Function to update the agent with new params
@@ -246,15 +249,23 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
             obs = payload["obs"]
             q = agent.forward_critic_eval(obs, actions)
             bc_q = agent.forward_critic_eval(obs, bc_actions)
-            if bc_q > q:
-                return {"select_bc": True}
+
+            return {"select_bc": bc_q.min(axis=0) > q.min(axis=0)}
+
+            # combined_actions = jnp.concatenate([actions, bc_actions], axis=0)
+            # combined_results = agent.forward_critic_eval(obs, combined_actions)
+            # best_index = jnp.argmin(combined_results, axis=0)
+            # return {"select_bc": best_index >= actions.shape[0]}
         else:
             raise ValueError(f"Invalid request type: {type}")
 
         return {}  # not expecting a response
 
     # Create server
-    server = TrainerServer(make_trainer_config(), request_callback=stats_callback)
+    server = TrainerServer(
+        make_trainer_config(port_number=FLAGS.port, broadcast_port=FLAGS.port + 1),
+        request_callback=stats_callback,
+    )
     server.register_data_store("actor_env", replay_buffer)
     server.register_data_store("actor_env_intvn", demo_buffer)
     server.start(threaded=True)
@@ -363,7 +374,7 @@ def main(_):
     env = config.get_environment(
         fake_env=FLAGS.learner,
         save_video=FLAGS.save_video,
-        classifier=True,
+        debug=FLAGS.debug,
     )
     env = RecordEpisodeStatistics(env)
 
@@ -381,7 +392,10 @@ def main(_):
         include_grasp_penalty = False
     elif config.setup_mode == "single-arm-learned-gripper":  # this
         def fake_bc_agent(obs):
-            return np.zeros(4)
+            return jax.numpy.zeros(4)
+        
+        bc_agent = None
+        # bc_agent = fake_bc_agent
 
         agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
             seed=FLAGS.seed,
@@ -391,8 +405,8 @@ def main(_):
             encoder_type=config.encoder_type,
             discount=config.discount,
             max_steps=config.max_steps,
-            if_schedule_lr=True
-            # bc_agent=fake_bc_agent,
+            if_schedule_lr=True,
+            bc_agent=bc_agent,
         )
         include_grasp_penalty = True
     elif config.setup_mode == "dual-arm-learned-gripper":
@@ -513,6 +527,7 @@ def main(_):
             intvn_data_store,
             env,
             sampling_rng,
+            bc_agent=bc_agent
         )
 
     else:

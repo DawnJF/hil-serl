@@ -18,11 +18,11 @@ from serl_launcher.vision.data_augmentations import batched_random_crop
 
 
 def make_bc_agent(
-    seed, 
-    sample_obs, 
-    sample_action, 
-    image_keys=("image",), 
-    encoder_type="resnet-pretrained"
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    encoder_type="resnet-pretrained",
 ):
     return BCAgent.create(
         jax.random.PRNGKey(seed),
@@ -102,7 +102,8 @@ def make_sac_pixel_agent_hybrid_single_arm(
     target_entropy=None,
     discount=0.97,
     max_steps=1000000,
-    if_schedule_lr=False
+    if_schedule_lr=False,
+    bc_agent=None,
 ):
     agent = SACAgentHybridSingleArm.create_pixels(
         jax.random.PRNGKey(seed),
@@ -141,7 +142,8 @@ def make_sac_pixel_agent_hybrid_single_arm(
         target_entropy=target_entropy,
         augmentation_function=make_batch_augmentation_func(image_keys),
         max_steps=max_steps,
-        if_schedule_lr=if_schedule_lr
+        if_schedule_lr=if_schedule_lr,
+        bc_agent=bc_agent,
     )
     return agent
 
@@ -201,11 +203,11 @@ def linear_schedule(step):
     end_value = 50.0
     decay_steps = 15_000
 
-
     linear_step = jnp.minimum(step, decay_steps)
     decayed_value = init_value + (end_value - init_value) * (linear_step / decay_steps)
     return decayed_value
-    
+
+
 def make_batch_augmentation_func(image_keys) -> callable:
 
     def data_augmentation_fn(rng, observations):
@@ -218,7 +220,7 @@ def make_batch_augmentation_func(image_keys) -> callable:
                 }
             )
         return observations
-    
+
     def augment_batch(batch: Batch, rng: PRNGKey) -> Batch:
         rng, obs_rng, next_obs_rng = jax.random.split(rng, 3)
         obs = data_augmentation_fn(obs_rng, batch["observations"])
@@ -230,7 +232,7 @@ def make_batch_augmentation_func(image_keys) -> callable:
             }
         )
         return batch
-    
+
     return augment_batch
 
 
@@ -238,7 +240,7 @@ def make_trainer_config(port_number: int = 5588, broadcast_port: int = 5589):
     return TrainerConfig(
         port_number=port_number,
         broadcast_port=broadcast_port,
-        request_types=["send-stats"],
+        request_types=["send-stats", "request-q"],
     )
 
 
@@ -255,13 +257,10 @@ def make_wandb_logger(
             "project": project,
             "exp_descriptor": description,
             "tag": description,
-            "mode": mode
+            "mode": mode,
         }
     )
     wandb_logger = WandBLogger(
-        wandb_config=wandb_config,
-        variant={},
-        debug=debug,
-        wandb_output_dir=output_dir
+        wandb_config=wandb_config, variant={}, debug=debug, wandb_output_dir=output_dir
     )
     return wandb_logger

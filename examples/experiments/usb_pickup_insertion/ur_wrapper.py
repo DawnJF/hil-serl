@@ -87,26 +87,30 @@ class Fake_UR_Platform_Env(gym.Env):
         )
 
         images = {
-            "scene": np.zeros((480, 640, 3), dtype=np.uint8),
-            "wrist": np.zeros((480, 640, 3), dtype=np.uint8),
-            "rgb": np.zeros((540, 960, 3), dtype=np.uint8),
-            "depth": np.zeros((540, 960), dtype=np.float32),
+            "wrist": np.zeros((128, 128, 3), dtype=np.uint8),
+            "rgb": np.zeros((128, 128, 3), dtype=np.uint8),
         }
         state_observation = {
-            "tcp_pose": np.zeros((7,)),
+            "tcp_pose": np.array([0, 0, 0, 0, 0, 0, 1]),
             "gripper_pose": np.zeros((1,)),
         }
         self.fake_obs = dict(images=images, state=state_observation)
 
     def step(self, action: np.ndarray) -> tuple:
-        time.sleep(0.2)
+        # time.sleep(0.2)
         reward = 0
         done = False
-        return self.fake_obs, int(reward), done, False, {"succeed": reward}
+        return (
+            copy.deepcopy(self.fake_obs),
+            int(reward),
+            done,
+            False,
+            {"succeed": reward},
+        )
 
     def reset(self, **kwargs):
         time.sleep(2)
-        return self.fake_obs, {"succeed": False}
+        return copy.deepcopy(self.fake_obs), {"succeed": False}
 
 
 class UR_Platform_Env(gym.Env):
