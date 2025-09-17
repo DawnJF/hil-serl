@@ -41,13 +41,13 @@ from experiments.mappings import CONFIG_MAPPING
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
+flags.DEFINE_string("exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_boolean("learner", False, "Whether this is a learner.")
 flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
-flags.DEFINE_string("checkpoint_path", None, "Path to save checkpoints.")
+flags.DEFINE_string("checkpoint_path", "outputs/debug", "Path to save checkpoints.")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_boolean("save_video", False, "Save video.")
 
@@ -380,6 +380,9 @@ def main(_):
         )
         include_grasp_penalty = False
     elif config.setup_mode == "single-arm-learned-gripper":  # this
+        def fake_bc_agent(obs):
+            return np.zeros(4)
+
         agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
             seed=FLAGS.seed,
             sample_obs=env.observation_space.sample(),
@@ -389,6 +392,7 @@ def main(_):
             discount=config.discount,
             max_steps=config.max_steps,
             if_schedule_lr=True
+            # bc_agent=fake_bc_agent,
         )
         include_grasp_penalty = True
     elif config.setup_mode == "dual-arm-learned-gripper":
@@ -488,7 +492,6 @@ def main(_):
 
         # learner loop
         print_green("starting learner loop")
-        # agent.bc_agent = None
         learner(
             sampling_rng,
             agent,

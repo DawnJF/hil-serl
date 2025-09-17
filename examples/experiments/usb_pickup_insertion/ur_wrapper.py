@@ -49,6 +49,66 @@ def pose_linspace(start_pose, goal_pose, steps):
     return poses
 
 
+class Fake_UR_Platform_Env(gym.Env):
+
+    def __init__(self):
+        REALSENSE_CAMERAS = {
+            "wrist": {
+                "dim": (1280, 720),
+            },
+            "rgb": {
+                "dim": (1280, 720),
+            },
+        }
+        self.observation_space = gym.spaces.Dict(
+            {
+                "state": gym.spaces.Dict(
+                    {
+                        "tcp_pose": gym.spaces.Box(
+                            -np.inf, np.inf, shape=(7,)
+                        ),  # xyz + quat
+                        "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
+                        "gripper_pose": gym.spaces.Box(-1, 1, shape=(1,)),
+                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                    }
+                ),
+                "images": gym.spaces.Dict(
+                    {
+                        key: gym.spaces.Box(0, 255, shape=(128, 128, 3), dtype=np.uint8)
+                        for key in REALSENSE_CAMERAS
+                    }
+                ),
+            }
+        )
+        self.action_space = gym.spaces.Box(
+            np.ones((7,), dtype=np.float32) * -1,
+            np.ones((7,), dtype=np.float32),
+        )
+
+        images = {
+            "scene": np.zeros((480, 640, 3), dtype=np.uint8),
+            "wrist": np.zeros((480, 640, 3), dtype=np.uint8),
+            "rgb": np.zeros((540, 960, 3), dtype=np.uint8),
+            "depth": np.zeros((540, 960), dtype=np.float32),
+        }
+        state_observation = {
+            "tcp_pose": np.zeros((7,)),
+            "gripper_pose": np.zeros((1,)),
+        }
+        self.fake_obs = dict(images=images, state=state_observation)
+
+    def step(self, action: np.ndarray) -> tuple:
+        time.sleep(0.2)
+        reward = 0
+        done = False
+        return self.fake_obs, int(reward), done, False, {"succeed": reward}
+
+    def reset(self, **kwargs):
+        time.sleep(2)
+        return self.fake_obs, {"succeed": False}
+
+
 class UR_Platform_Env(gym.Env):
     def __init__(
         self,

@@ -21,9 +21,10 @@
             "args": [
                 "--exp_name=usb_pickup_insertion",
                 // "--checkpoint_path=first_run",
-                "--demo_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_50_17-45-18.pkl",
+                "--demo_path=/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_5_11-05-02.pkl",
                 "--learner",
-                "--debug=true",
+                "--debug",
+                "--port=5888",
                 // "--checkpoint_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl"
             ],
             "env": {
@@ -39,8 +40,12 @@
             "console": "integratedTerminal",
             "args": [
                 "--exp_name=usb_pickup_insertion",
-                "--checkpoint_path=../../experiments/usb_pickup_insertion/debug5",
-                "--actor"
+                "--checkpoint_path=../../experiments/usb_pickup_insertion/plug4",
+                "--wandb_mode=offline",
+                "--wandb_output_dir=../../experiments/usb_pickup_insertion/wandb",
+                "--actor",
+                "--port=5888",
+                "--debug",
             ],
             "env": {
                 "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
@@ -80,10 +85,10 @@
             "request": "launch",
             "program": "/usr/bin/sudo",
             "args": [
-                "-E",  // 保留环境变量
+                "-E", // 保留环境变量
                 "/home/robot/miniforge3/envs/roboar4il/hilserl/bin/python",
                 "${workspaceFolder}/examples/train_rlpd.py",
-                "--exp_name=usb_pickup_insertion",  // 您的脚本参数
+                "--exp_name=usb_pickup_insertion", // 您的脚本参数
                 "--demo_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl",
                 "--learner",
                 "--debug=true",

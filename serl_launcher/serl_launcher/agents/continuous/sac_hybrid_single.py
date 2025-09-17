@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Iterable, Optional, Tuple, FrozenSet
+from typing import Any, Iterable, Optional, Tuple, FrozenSet
 
 import chex
 import distrax
@@ -32,6 +32,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
 
     state: JaxRLTrainState
     config: dict = nonpytree_field()
+    bc_agent: Optional[Any] = nonpytree_field() 
 
     def forward_critic_eval(
         self,
@@ -511,6 +512,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         image_keys: Iterable[str] = None,
         augmentation_function: Optional[callable] = None,
         reward_bias: float = 0.0,
+        bc_agent=None,
         **kwargs,
     ):
         networks = {
@@ -580,6 +582,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
                 augmentation_function=augmentation_function,
                 **kwargs,
             ),
+            bc_agent=bc_agent
         )
 
     @classmethod
@@ -609,6 +612,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         temperature_init: float = 1.0,
         image_keys: Iterable[str] = ("image",),
         augmentation_function: Optional[callable] = None,
+        bc_agent=None,
         **kwargs,
     ):
         """
@@ -707,6 +711,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             critic_subsample_size=critic_subsample_size,
             image_keys=image_keys,
             augmentation_function=augmentation_function,
+            bc_agent=bc_agent,
             **kwargs,
         )
 

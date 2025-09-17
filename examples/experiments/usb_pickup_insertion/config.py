@@ -26,9 +26,12 @@ from experiments.usb_pickup_insertion.wrapper import (
     HumanRewardEnv,
     USBEnv,
     GripperPenaltyWrapper,
-    ImageTransformWrapper
+    ImageTransformWrapper,
 )
-from experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
+from experiments.usb_pickup_insertion.ur_wrapper import (
+    UR_Platform_Env,
+    Fake_UR_Platform_Env,
+)
 
 
 class EnvConfig(DefaultEnvConfig):
@@ -211,28 +214,19 @@ class TrainConfig(DefaultTrainingConfig):
     encoder_type = "resnet-pretrained"
     setup_mode = "single-arm-learned-gripper"
 
-    def get_environment(self, fake_env=False, save_video=False, classifier=False):
-        # env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
-        env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
-        env = HumanRewardEnv(env)
-        if not fake_env:
+    def get_environment(self, fake_env=False, save_video=False, debug=False):
+        if debug:
+            env = Fake_UR_Platform_Env()
+        else:
+            env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
+        if not debug:
+            env = HumanRewardEnv(env)
+        if not fake_env and not debug:
             env = SpacemouseIntervention(env)
         env = RelativeFrame(env, include_relative_pose=False)
         env = Quat2EulerWrapper(env)
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
-        # if classifier:
-        #     classifier = load_classifier_func(
-        #         key=jax.random.PRNGKey(0),
-        #         sample=env.observation_space.sample(),
-        #         image_keys=self.classifier_keys,
-        #         checkpoint_path=os.path.abspath("classifier_ckpt/"),
-        #     )
-
-        #     def reward_func(obs):
-        #         sigmoid = lambda x: 1 / (1 + jnp.exp(-x))
-        #         return int(sigmoid(classifier(obs)) > 0.7 and obs["state"][0, 0] > 0.4)
-
         #     env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
         env = GripperPenaltyWrapper(env, penalty=-0.02)
         # env = ImageTransformWrapper(env, config=UREnvConfig())
@@ -258,11 +252,12 @@ def test_mouse():
 def test_images():
     from PIL import Image
     import jax
+
     if not hasattr(jax, "tree_map"):
         jax.tree_map = jax.tree.map
     if not hasattr(jax, "tree_leaves"):
         jax.tree_leaves = jax.tree.leaves
-    
+
     proprio_keys = ["tcp_pose", "gripper_pose"]
 
     env = UR_Platform_Env(fake_env=False, config=UREnvConfig())
@@ -271,10 +266,7 @@ def test_images():
     env = SERLObsWrapper(env, proprio_keys=proprio_keys)
     env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
     env = GripperPenaltyWrapper(env, penalty=-0.02)
-    env = ImageTransformWrapper(
-        env,
-        config=UREnvConfig()
-    )
+    env = ImageTransformWrapper(env, config=UREnvConfig())
     env.reset()
     action = env.action_space.sample()
     obs, reward, done, truncated, info = env.step(action)
