@@ -13,6 +13,7 @@ import logging
 from tqdm import tqdm
 import tyro
 from torchvision import transforms
+from torch.utils.tensorboard import SummaryWriter
 
 sys.path.append(os.getcwd())
 from bc.net import BCActor
@@ -34,6 +35,10 @@ class Args:
     action_dim: int = 4
     image_num: int = 2  # 输入图像数量
     state_dim: int = 7
+    
+    # Tensorboard相关配置
+    tensorboard_port: int = 6006  # Tensorboard端口
+    log_interval: int = 10  # 每多少个batch记录一次详细指标
 
 
 def get_train_transform():
@@ -142,9 +147,52 @@ def load_and_split_data():
         "observations:state": "state",
         "actions": "actions",
     }
-    data_list = load_pkl(
-        "/Users/majianfei/Downloads/usb_pickup_insertion_30_11-50-21.pkl", mapping
-    )
+
+    data_list = []
+    
+    # 定义要加载的文件列表
+    data_files = [
+        "/home/chen/Projects/hil-serl/usb_pickup_insertion_30_11-50-21.pkl",
+        # classifier_data 子目录中的文件 
+        "/home/chen/Projects/hil-serl/classifier_data/2025-09-12/*.pkl",
+        "/home/chen/Projects/hil-serl/classifier_data/2025-09-12-13/*.pkl",
+        "/home/chen/Projects/hil-serl/classifier_data/2025-09-15/*.pkl",
+    ]
+    
+    total_added = 0
+    
+    for file_pattern in data_files:
+        # 处理通配符模式
+        if '*' in file_pattern:
+            # 使用 glob 查找匹配的文件
+            import glob
+            matched_files = glob.glob(file_pattern)
+            
+            if not matched_files:
+                logging.warning(f"没有找到匹配的文件: {file_pattern}")
+                continue
+                
+            for file_path in matched_files:
+                try:
+                    file_data = load_pkl(file_path, mapping)
+                    data_list.extend(file_data)
+                    total_added += len(file_data)
+                    logging.info(f"加载 {file_path}: {len(file_data)} 个样本")
+                except Exception as e:
+                    logging.warning(f"跳过 {file_path}: {e}")
+        else:
+            # 处理单个文件
+            if not os.path.exists(file_pattern):
+                logging.warning(f"文件不存在，跳过: {file_pattern}")
+                continue
+                
+            try:
+                file_data = load_pkl(file_pattern, mapping)
+                data_list.extend(file_data)
+                total_added += len(file_data)
+                logging.info(f"加载 {file_pattern}: {len(file_data)} 个样本")
+            except Exception as e:
+                logging.warning(f"跳过 {file_pattern}: {e}")
 
     train_data, test_data = train_test_split(data_list)
 
@@ -168,6 +216,9 @@ def train(args: Args, epochs=10):
     os.makedirs(args.output_dir, exist_ok=True)
     setup_logging(args.output_dir)
 
+    tensorboard_dir = os.path.join(args.output_dir, "tensorboard")
+    writer = SummaryWriter(tensorboard_dir)
+
     train_dataloader, test_dataloader = load_and_split_data()
 
     model = BCActor(args).to(device)
@@ -177,7 +228,8 @@ def train(args: Args, epochs=10):
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-5)
-
+    
+    global_step = 0
     for epoch in range(epochs):
         # 训练阶段
         model.train()
@@ -193,6 +245,12 @@ def train(args: Args, epochs=10):
             optimizer.step()
 
             total_loss += loss.item()
+            global_step += 1
+            
+            # 记录每步的损失和epoch信息
+            if batch_idx % args.log_interval == 0:
+                writer.add_scalar('Loss/Step', loss.item(), global_step)
+                writer.add_scalar('Epoch/Step', epoch, global_step)
 
         # 计算训练集平均损失和成功率
         avg_loss = total_loss / len(train_dataloader)
@@ -213,6 +271,9 @@ def train(args: Args, epochs=10):
                 val_loss += criterion(outputs, action).item()
         val_loss /= len(test_dataloader)
 
+        writer.add_scalar('Loss/Train_Epoch', avg_loss, epoch)
+        writer.add_scalar('Loss/Val_Epoch', val_loss, epoch)
+        
         logging.info(f"Epoch {epoch+1}/{epochs}:")
         logging.info(f"  Train Loss: {avg_loss:.4f}")
         logging.info(f"  Val Loss: {val_loss:.4f}")
@@ -220,6 +281,9 @@ def train(args: Args, epochs=10):
 
         cp_name = f"{args.output_dir}/checkpoint-{epoch+1}.pth"
         save_checkpoint(model, path=cp_name)
+
+    writer.close()
+    logging.info("Tensorboard logging completed.")
 
 
 class ActorWrapper:
