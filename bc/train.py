@@ -34,6 +34,8 @@ class Args:
     image_num: int = 2  # 输入图像数量
     state_dim: int = 7
 
+    batch_size: int = 128
+
     log_interval: int = 10  # 每多少个batch记录一次详细指标
     print_action_interval: int = 50
 
@@ -105,17 +107,18 @@ class ImagesActionDataset(Dataset):
 
         # 创建映射后的label，不修改原始label
         if self.use_gripper_mapping:
-            mapped_label = original_label.clone()  # 创建副本
+            label = original_label.clone()  # 创建副本
 
-            # 将state的第0维映射到[-1, 1]范围作为gripper状态
-            gripper_state = (
-                state[0].item() if isinstance(state, torch.Tensor) else state[0]
-            )
-            mapped_label[-1] = gripper_state  # in [0,1]
+            if label[-1] <= -0.5:
+                label[-1] = torch.tensor(-1.0)  # 闭合
+            elif label[-1] >= 0.5:
+                label[-1] = torch.tensor(1.0)  # 打开
+            else:
+                label[-1] = state[0]
         else:
-            mapped_label = original_label
+            label = original_label
 
-        return imgs, state, mapped_label, original_label
+        return imgs, state, label, original_label
 
 
 def save_checkpoint(model, path):
@@ -126,7 +129,7 @@ def save_checkpoint(model, path):
 def load_checkpoint(model, path):
     checkpoint = torch.load(path)
     model.load_state_dict(checkpoint["model_state_dict"])
-    print(f"Checkpoint loaded from {path}")
+    logging.info(f"Checkpoint loaded from {path}")
     return checkpoint.get("crop_dict", None)
 
 
@@ -151,10 +154,11 @@ def load_checkpoint(model, path):
 #             total += labels.size(0)
 #             correct += (predicted == labels).sum().item()
 #     accuracy = 100 * correct / total
-#     print(f"Test Accuracy: {accuracy:.2f}% ({correct}/{total})")
+#     logging.info(f"Test Accuracy: {accuracy:.2f}% ({correct}/{total})")
 
 
-def load_and_split_data(use_gripper_mapping=True):
+def load_and_split_data(args):
+    use_gripper_mapping = args.use_gripper_mapping
     mapping = {
         "observations:rgb": "image1",
         "observations:wrist": "image2",
@@ -166,11 +170,11 @@ def load_and_split_data(use_gripper_mapping=True):
 
     # 定义要加载的文件列表
     data_files = [
-        "/home/chen/Projects/hil-serl/usb_pickup_insertion_30_11-50-21.pkl",
+        "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl",
         # classifier_data 子目录中的文件
-        "/home/chen/Projects/hil-serl/classifier_data/2025-09-12/*.pkl",
-        "/home/chen/Projects/hil-serl/classifier_data/2025-09-12-13/*.pkl",
-        "/home/chen/Projects/hil-serl/classifier_data/2025-09-15/*.pkl",
+        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12/*.pkl",
+        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
+        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-15/*.pkl",
     ]
 
     total_added = 0
@@ -219,7 +223,9 @@ def load_and_split_data(use_gripper_mapping=True):
         transform=get_train_transform(),
         use_gripper_mapping=use_gripper_mapping,
     )
-    train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    train_dataloader = DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=True
+    )
 
     test_dataset = ImagesActionDataset(
         test_data,
@@ -242,9 +248,7 @@ def train(args: Args, epochs=200):
     tensorboard_dir = os.path.join(args.output_dir, "tensorboard")
     writer = SummaryWriter(tensorboard_dir)
 
-    train_dataloader, test_dataloader = load_and_split_data(
-        use_gripper_mapping=args.use_gripper_mapping
-    )
+    train_dataloader, test_dataloader = load_and_split_data(args)
 
     model = BCActor(args).to(device)
 
@@ -252,7 +256,7 @@ def train(args: Args, epochs=200):
         load_checkpoint(model, path=args.model_path)
 
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     global_step = 0
     for epoch in range(epochs):
@@ -291,12 +295,12 @@ def train(args: Args, epochs=200):
                 true_original_action = original_action[0].detach().cpu().numpy()
                 state_values = state[0].detach().cpu().numpy()
 
-                print(f"\nBatch {batch_idx}, Step {global_step}:")
-                print(f"State:              {state_values}")
-                print(f"Predicted action:    {pred_action}")
-                print(f"Mapped true action:  {true_mapped_action}")
-                print(f"Original true action:{true_original_action}")
-                print(f"Loss: {loss.item():.6f}")
+                logging.info(f"\nBatch {batch_idx}, Step {global_step}:")
+                logging.info(f"State:              {state_values}")
+                logging.info(f"Predicted action:    {pred_action}")
+                logging.info(f"Mapped true action:  {true_mapped_action}")
+                logging.info(f"Original true action:{true_original_action}")
+                logging.info(f"Loss: {loss.item():.6f}")
 
         # 计算训练集平均损失和成功率
         avg_loss = total_loss / len(train_dataloader)
@@ -371,14 +375,15 @@ class ActorWrapper:
 
         # 只有在启用抓爪映射时才进行后处理
         if self.use_gripper_mapping:
-            predicted_gripper = np_action[-1]
+            predicted_gripper = 0 if np_action[-1] > 0.5 else 1
+            print(f"predicted_gripper:{predicted_gripper}")
             if (
-                predicted_gripper < 0.5
+                predicted_gripper == 0
                 and predicted_gripper != self.last_predicted_gripper
             ):
                 np_action[-1] = 1.0  # 打开
             elif (
-                predicted_gripper >= 0.5
+                predicted_gripper == 1
                 and predicted_gripper != self.last_predicted_gripper
             ):
                 np_action[-1] = -1.0  # 闭合
