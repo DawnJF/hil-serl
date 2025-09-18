@@ -54,7 +54,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         if self.bc_agent is None:
             return target_next_qs
 
-        bc_next_actions = self.bc_agent(obs["state"])
+        bc_next_actions = self.bc_agent(obs)
         bc_target_next_qs = self.forward_target_critic(
             obs,
             bc_next_actions,

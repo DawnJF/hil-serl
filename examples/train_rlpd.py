@@ -84,6 +84,26 @@ def select_action(actions, bc_agent, obs, client):
         return actions
 
 
+def select_action_v2(actions, bc_agent, obs, agent):
+    if bc_agent is None:
+        return actions
+
+    xyz = actions[:3]
+    bc_actions = bc_agent(obs)
+    bc_actions = bc_actions[0]
+    bc_actions = jnp.append(bc_actions, actions[3])
+
+    bc_xyz = bc_actions[:3]
+
+    q = agent.forward_critic_eval(obs, xyz)
+    bc_q = agent.forward_critic_eval(obs, bc_xyz)
+
+    if bc_q.min(axis=0) > q.min(axis=0):
+        return bc_actions
+    else:
+        return actions
+
+
 ##############################################################################
 
 
@@ -108,7 +128,7 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
         make_trainer_config(port_number=FLAGS.port, broadcast_port=FLAGS.port + 1),
         data_stores=datastore_dict,
         wait_for_server=True,
-        timeout_ms=10000,
+        timeout_ms=3000,
     )
 
     # Function to update the agent with new params
@@ -145,7 +165,8 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
                     seed=key,
                     argmax=False,
                 )
-                actions = select_action(actions, bc_agent, obs, client)
+                # actions = select_action(actions, bc_agent, obs, client)
+                actions = select_action_v2(actions, bc_agent, obs, agent)
                 actions = np.asarray(jax.device_get(actions))
 
         # Step environment
@@ -392,7 +413,8 @@ def main(_):
         include_grasp_penalty = False
     elif config.setup_mode == "single-arm-learned-gripper":  # this
         def fake_bc_agent(obs):
-            return jax.numpy.zeros(4)
+            batch = len(obs['state'])
+            return jax.numpy.zeros((batch, 3))
         
         bc_agent = None
         # bc_agent = fake_bc_agent

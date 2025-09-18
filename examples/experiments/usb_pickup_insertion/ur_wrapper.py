@@ -95,11 +95,13 @@ class Fake_UR_Platform_Env(gym.Env):
             "gripper_pose": np.zeros((1,)),
         }
         self.fake_obs = dict(images=images, state=state_observation)
+        self.curr_path_length = 0
 
     def step(self, action: np.ndarray) -> tuple:
+        self.curr_path_length += 1
+        done = self.curr_path_length >= 20
         # time.sleep(0.2)
         reward = 0
-        done = False
         return (
             copy.deepcopy(self.fake_obs),
             int(reward),
@@ -109,6 +111,7 @@ class Fake_UR_Platform_Env(gym.Env):
         )
 
     def reset(self, **kwargs):
+        self.curr_path_length = 0
         time.sleep(2)
         return copy.deepcopy(self.fake_obs), {"succeed": False}
 
@@ -374,7 +377,9 @@ class UR_Platform_Env(gym.Env):
     def _send_gripper_command(self, pos: float, mode="binary"):
         """Internal function to send gripper command to the robot."""
         # print(f"[DEBUG] _send_gripper_command {pos}")
-        print(f"[DEBUG] _send_gripper_command pos:{pos} currgripper: {self.currgripper}")
+        print(
+            f"[DEBUG] _send_gripper_command pos:{pos} currgripper: {self.currgripper}"
+        )
         if mode == "binary":
             if (
                 (pos <= -0.5)
