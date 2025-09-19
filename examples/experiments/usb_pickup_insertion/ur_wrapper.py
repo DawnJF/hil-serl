@@ -389,7 +389,7 @@ class UR_Platform_Env(gym.Env):
             ):  # close gripper
                 self.client.post({"type": "close_gripper"})
                 self.last_gripper_act = time.time()
-                time.sleep(self.gripper_sleep)
+                # time.sleep(self.gripper_sleep)
             elif (
                 (pos >= 0.5)
                 # and (self.currgripper < 0.85)
@@ -398,7 +398,7 @@ class UR_Platform_Env(gym.Env):
             ):  # open gripper
                 self.client.post({"type": "open_gripper"})
                 self.last_gripper_act = time.time()
-                time.sleep(self.gripper_sleep)
+                # time.sleep(self.gripper_sleep)
             else:
                 return
         elif mode == "continuous":
