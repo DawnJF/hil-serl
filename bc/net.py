@@ -109,3 +109,33 @@ class BCActor(nn.Module):
     def forward(self, state, imgs):
         x = self.encoder(state, imgs)
         return self.actor(x)
+
+
+class BCPolicyWithDiscrete(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        image_num = args.image_num
+        image_shape = args.image_shape
+        state_dim = args.state_dim
+        action_dim = args.action_dim
+
+        self.encoder = EncoderWrapper(image_num=image_num, proprio_dim=state_dim)
+
+        encode_dim = self.encoder.get_out_shape(image_shape)
+        logging.info(f"Encoder output dim: {encode_dim}")
+
+        self.actor = nn.Sequential(
+            nn.Linear(encode_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+        )
+        self.continue_head = nn.Linear(256, 3)  # 3 classes for continuous actions
+        self.discrete_head = nn.Linear(256, 3)  # 3 classes for discrete actions
+
+    def forward(self, state, imgs):
+        x = self.encoder(state, imgs)
+        features = self.actor(x)
+        continue_logits = self.continue_head(features)
+        discrete_logits = self.discrete_head(features)
+        return continue_logits, discrete_logits

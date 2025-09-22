@@ -1,12 +1,13 @@
 import sys
 import os
 import time
+import jax
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 import logging
@@ -16,7 +17,7 @@ from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
 
 sys.path.append(os.getcwd())
-from bc.net import BCActor
+from bc.net import BCActor, BCPolicyWithDiscrete
 from reward_model.net import ResNetClassifier
 from reward_model.pkl_utils import load_pkl, load_pkl_to_reward_model
 from utils.image_augmentations import get_eval_transform, get_train_transform
@@ -30,14 +31,17 @@ class Args:
     model_path: str = None
 
     image_shape: int = 128
-    action_dim: int = 4
+    action_dim: int = 3 + 3  # xyz + gripper(open/close/keep)
     image_num: int = 2  # 输入图像数量
     state_dim: int = 7
 
     batch_size: int = 128
 
     log_interval: int = 10  # 每多少个batch记录一次详细指标
-    print_action_interval: int = 50
+    print_action_interval: int = 500
+    dis_create_weight: list = field(
+        default_factory=lambda: [20.0, 1.0, 20.0]
+    )  # gripper open/keep/close 权重
 
 
 def get_train_transform():
@@ -98,20 +102,56 @@ class ImagesActionDataset(Dataset):
         state = state.squeeze()
         state = torch.tensor(state, dtype=torch.float32)
 
-        label = self.data[idx]["actions"]
+        action = self.data[idx]["actions"]
 
-        return imgs, state, label
+        continue_label = torch.tensor(action[:3], dtype=torch.float32)
+
+        """
+        -1, 0, 1 -> 0, 1, 2
+        """
+        if action[-1] <= -0.5:
+            gripper_label = torch.tensor(0, dtype=torch.long)
+        elif action[-1] < 0.5:
+            gripper_label = torch.tensor(1, dtype=torch.long)
+        else:
+            gripper_label = torch.tensor(2, dtype=torch.long)
+
+        return imgs, state, continue_label, gripper_label
 
 
-def save_checkpoint(model, path):
+def save_checkpoint(model, path, args):
     torch.save({"model_state_dict": model.state_dict(), "args": vars(args)}, path)
     logging.info(f"Checkpoint saved to {path}")
 
 
 def load_checkpoint(model, path):
-    checkpoint = torch.load(path)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    checkpoint_dict = torch.load(path)
+    model.load_state_dict(checkpoint_dict["model_state_dict"])
     logging.info(f"Checkpoint loaded from {path}")
+
+
+# def test(model_path=None):
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     _, test_images, _, test_labels = load_and_split_data()
+#     # _, _, test_images, test_labels = jax_load_to_reward_model()
+#     dataset = ImageSequenceDataset(
+#         test_images, test_labels, transform=image_normalization
+#     )
+#     dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
+#     model = ResNetClassifier().to(device)
+#     load_checkpoint(model, path=model_path)
+#     model.eval()
+#     correct = 0
+#     total = 0
+#     with torch.no_grad():
+#         for imgs, labels in dataloader:
+#             imgs, labels = imgs.to(device), labels.to(device)
+#             outputs = model(imgs)
+#             _, predicted = torch.max(outputs.data, 1)
+#             total += labels.size(0)
+#             correct += (predicted == labels).sum().item()
+#     accuracy = 100 * correct / total
+#     logging.info(f"Test Accuracy: {accuracy:.2f}% ({correct}/{total})")
 
 
 def load_and_split_data(args):
@@ -191,26 +231,29 @@ def load_and_split_data(args):
     return train_dataloader, test_dataloader
 
 
-def train(args: Args, epochs=200):
+def train(args: Args, epochs=100):
     device = get_device()
 
     args.output_dir = f"{args.output_dir}_" + time.strftime("%Y%m%d_%H%M%S")
 
     os.makedirs(args.output_dir, exist_ok=True)
     setup_logging(args.output_dir)
+    logging.info(f"Args: {vars(args)}")
 
     tensorboard_dir = os.path.join(args.output_dir, "tensorboard")
     writer = SummaryWriter(tensorboard_dir)
 
     train_dataloader, test_dataloader = load_and_split_data(args)
 
-    model = BCActor(args).to(device)
+    model = BCPolicyWithDiscrete(args).to(device)
 
     if args.model_path is not None:
         load_checkpoint(model, path=args.model_path)
 
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=4e-5)
+    weights = torch.tensor(list(args.dis_create_weight), dtype=torch.float32).to(device)
+    discrete_criterion = nn.CrossEntropyLoss(weight=weights)
 
     global_step = 0
     for epoch in range(epochs):
@@ -218,16 +261,19 @@ def train(args: Args, epochs=200):
         model.train()
         total_loss = 0.0
 
-        for batch_idx, (imgs, state, mapped_action, original_action) in tqdm(
+        for batch_idx, (imgs, state, continue_label, discrete_label) in tqdm(
             enumerate(train_dataloader)
         ):
-            imgs, state, mapped_action = (
-                imgs.to(device),
-                state.to(device),
-                mapped_action.to(device),
-            )
-            predicted = model(state, imgs)  # [B, num_classes]action
-            loss = criterion(predicted, mapped_action)
+            imgs = imgs.to(device)
+            state = state.to(device)
+            continue_label = continue_label.to(device)
+            discrete_label = discrete_label.to(device)
+
+            pred_continue, pred_discrete = model(state, imgs)  # [B, num_classes]action
+            continue_loss = criterion(pred_continue, continue_label)
+            discrete_loss = discrete_criterion(pred_discrete, discrete_label)  # gripper
+
+            loss = continue_loss + discrete_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -237,24 +283,25 @@ def train(args: Args, epochs=200):
             global_step += 1
 
             # 记录每步的损失和epoch信息
-            if batch_idx % args.log_interval == 0:
-                writer.add_scalar("Loss/Step", loss.item(), global_step)
-                writer.add_scalar("Epoch/Step", epoch, global_step)
+            writer.add_scalar("Loss/Step", loss.item(), global_step)
+            writer.add_scalar("Loss/Continue_Step", continue_loss.item(), global_step)
+            writer.add_scalar("Loss/Discrete_Step", discrete_loss.item(), global_step)
+            writer.add_scalar("Epoch_Step", epoch, global_step)
 
             # 打印预测的action
-            if batch_idx % args.print_action_interval == 0:
-                # 打印第一个样本的预测结果和真实值
-                pred_action = predicted[0].detach().cpu().numpy()
-                true_mapped_action = mapped_action[0].detach().cpu().numpy()
-                true_original_action = original_action[0].detach().cpu().numpy()
-                state_values = state[0].detach().cpu().numpy()
+            # if batch_idx % args.print_action_interval == 0:
+            #     # 打印第一个样本的预测结果和真实值
+            #     pred_action = predicted[0].detach().cpu().numpy()
+            #     label = label[0].detach().cpu().numpy()
+            #     original_label = original_action[0].detach().cpu().numpy()
+            #     state_values = state[0].detach().cpu().numpy()
 
-                logging.info(f"\nBatch {batch_idx}, Step {global_step}:")
-                logging.info(f"State:              {state_values}")
-                logging.info(f"Predicted action:    {pred_action}")
-                logging.info(f"Mapped true action:  {true_mapped_action}")
-                logging.info(f"Original true action:{true_original_action}")
-                logging.info(f"Loss: {loss.item():.6f}")
+            #     logging.info(f"\nBatch {batch_idx}, Step {global_step}:")
+            #     logging.info(f"State:              {state_values}")
+            #     logging.info(f"Predicted action:    {pred_action}")
+            #     logging.info(f"Mapped true action:  {label}")
+            #     logging.info(f"Original true action:{original_label}")
+            #     logging.info(f"Loss: {loss.item():.6f}")
 
         # 计算训练集平均损失和成功率
         avg_loss = total_loss / len(train_dataloader)
@@ -265,18 +312,22 @@ def train(args: Args, epochs=200):
         val_loss = 0.0
 
         with torch.no_grad():
-            for imgs, state, mapped_action, original_action in test_dataloader:
-                imgs, state, mapped_action = (
+            for imgs, state, continue_label, discrete_label in test_dataloader:
+                imgs, state, continue_label, discrete_label = (
                     imgs.to(device),
                     state.to(device),
-                    mapped_action.to(device),
+                    continue_label.to(device),
+                    discrete_label.to(device),
                 )
-                outputs = model(state, imgs)
-                val_loss += criterion(outputs, mapped_action).item()
+                pred_continue, pred_discrete = model(state, imgs)
+                continue_loss = criterion(pred_continue, continue_label)
+                discrete_loss = discrete_criterion(pred_discrete, discrete_label)
+                loss = continue_loss + discrete_loss
+                val_loss += loss.item()
 
         val_loss /= len(test_dataloader)
 
-        writer.add_scalar("Loss/Train_Epoch", avg_loss, epoch)
+        writer.add_scalar("Loss/Epoch", avg_loss, epoch)
         writer.add_scalar("Loss/Val_Epoch", val_loss, epoch)
 
         logging.info(f"Epoch {epoch+1}/{epochs}:")
@@ -285,7 +336,7 @@ def train(args: Args, epochs=200):
         logging.info("-" * 40)
 
         cp_name = f"{args.output_dir}/checkpoint-{epoch+1}.pth"
-        save_checkpoint(model, path=cp_name)
+        save_checkpoint(model, path=cp_name, args=args)
 
     writer.close()
     logging.info("Tensorboard logging completed.")
@@ -295,10 +346,9 @@ class ActorWrapper:
     def __init__(self, model_path):
         self.device = get_device()
         args = Args()
-        self.model = BCActor(args).to(self.device)
+        self.model = BCPolicyWithDiscrete(args).to(self.device)
         load_checkpoint(self.model, path=model_path)
         self.model.eval()
-        self.last_predicted_gripper = 0
 
     def predict(self, obs):
         state = obs["state"]
@@ -318,10 +368,15 @@ class ActorWrapper:
         imgs = imgs.to(self.device)
         state = torch.tensor(state, dtype=torch.float32).to(self.device)
         with torch.no_grad():
-            action = self.model(state, imgs)
+            action, gripper = self.model(state, imgs)
 
         np_action = action.cpu().numpy().squeeze()
-        print(f"np_action: {np_action}")
+        np_gripper = gripper.cpu().numpy().squeeze()
+
+        gripper_action = np.argmax(np_gripper) - 1  # 0, 1, 2 -> -1, 0, 1
+        np_action = np.concatenate([np_action, [gripper_action]], axis=0)
+
+        print(f"Predicted action: {np_action}")
 
         return np_action
 
