@@ -114,6 +114,15 @@ def ensemblize(cls, num_qs, out_axes=0):
 
     return EnsembleModule
 
+
+"""
+Policy std_min: 1e-05
+Policy std_max: 5
+Policy tanh_squash_distribution: True
+Policy fixed_std: None
+Policy std_parameterization: exp
+Policy init_final: None
+"""
 class Policy(nn.Module):
     encoder: Optional[nn.Module]
     network: nn.Module
