@@ -17,7 +17,7 @@ from torchvision.transforms.v2 import functional as F
 from gymnasium.spaces import flatten_space, flatten
 
 sys.path.append(os.getcwd())
-from serl_launcher.serl_launcher.wrappers.chunking import space_stack, stack_obs
+from serl_launcher.serl_launcher.wrappers.chunking import space_stack
 from serl_robot_infra.franka_env.utils.transformations import (
     construct_adjoint_matrix,
     construct_homogeneous_matrix,
@@ -249,6 +249,11 @@ class SERLObsWrapper(gym.ObservationWrapper):
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         return self.observation(obs), info
+
+
+def stack_obs(obs_list):
+    dict_list = {k: [dic[k] for dic in obs_list] for k in obs_list[0]}
+    return {k: np.stack(v) for k, v in dict_list.items()}
 
 
 class ChunkingWrapper(gym.Wrapper):

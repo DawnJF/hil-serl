@@ -1,6 +1,5 @@
 import sys
 import os
-
 import glob
 import time
 import numpy as np
@@ -9,52 +8,18 @@ import tqdm
 import tyro
 from dataclasses import dataclass, field
 from typing import Optional, List
-import os
 import copy
 import pickle as pkl
-
-
-from natsort import natsorted
-
-# 添加serl_launcher到路径
-sys.path.append(os.getcwd())
-from serl_launcher.serl_launcher.utils.logging_utils import RecordEpisodeStatistics
-from serl_launcher.serl_launcher.utils.timer_utils import Timer
-from agentlace.trainer import TrainerConfig
-from agentlace.trainer import TrainerServer, TrainerClient
+from agentlace.trainer import TrainerServer, TrainerClient, TrainerConfig
 from agentlace.data.data_store import QueuedDataStore
 
 sys.path.append(os.getcwd())
-from bc.train_v2 import get_train_transform
+from serl_launcher.serl_launcher.utils.logging_utils import RecordEpisodeStatistics
+from serl_launcher.serl_launcher.utils.timer_utils import Timer
 from rl.envs_temp import get_environment
 from rl.replay_buffer_data_store import ReplayBufferDataStore
-from rl.sac_policy import SACPolicy, SACConfig, dict_data_to_torch
-from utils.tools import print_dict_structure
-
-
-def make_trainer_config(port_number: int = 5588, broadcast_port: int = 5589):
-    return TrainerConfig(
-        port_number=port_number,
-        broadcast_port=broadcast_port,
-        request_types=["send-stats", "request-q"],
-    )
-
-
-def make_wandb_logger(
-    project, description, debug=False, mode="offline", output_dir=None
-):
-    """Simple wandb logger placeholder"""
-
-    class DummyLogger:
-        def log(self, data, step=None):
-            if debug:
-                print(f"Step {step}: {data}")
-
-    return DummyLogger()
-
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+from rl.sac_policy import SACPolicy, SACConfig, dict_data_to_torch, get_train_transform
+from utils.tools import get_device, print_dict_structure
 
 
 @dataclass
@@ -85,6 +50,31 @@ class Config:
     checkpoint_period: int = 10000
     buffer_period: int = 25000  # steps between buffer saves
     image_keys: List[str] = field(default_factory=lambda: ["rgb", "wrist"])
+
+
+def make_trainer_config(port_number: int = 5588, broadcast_port: int = 5589):
+    return TrainerConfig(
+        port_number=port_number,
+        broadcast_port=broadcast_port,
+        request_types=["send-stats", "request-q"],
+    )
+
+
+def make_wandb_logger(
+    project, description, debug=False, mode="offline", output_dir=None
+):
+    """Simple wandb logger placeholder"""
+
+    class DummyLogger:
+        def log(self, data, step=None):
+            if debug:
+                print(f"Step {step}: {data}")
+
+    return DummyLogger()
+
+
+device = get_device()
+print(f"Using device: {device}")
 
 
 # 简化版本的 concat_batches 函数
@@ -496,3 +486,10 @@ def main(config: Config):
 if __name__ == "__main__":
     config = tyro.cli(Config)
     main(config)
+
+
+"""
+python rl/train.py --learner --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --debug --max_steps 100
+
+python rl/train.py --actor --debug --max_steps 100
+"""
