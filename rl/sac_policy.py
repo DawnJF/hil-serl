@@ -1,11 +1,6 @@
 import math
 import os
 import sys
-
-sys.path.append(os.getcwd())
-from collections.abc import Callable
-from dataclasses import asdict
-from typing import Literal
 import pickle as pkl
 import einops
 import gymnasium as gym
@@ -15,6 +10,9 @@ from torchvision import transforms
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from dataclasses import dataclass, field
+import tyro
+
+sys.path.append(os.getcwd())
 from rl.net import Actor, Critic, DiscreteQCritic
 from rl.replay_buffer_data_store import ReplayBufferDataStore
 from utils.tools import get_device
@@ -76,7 +74,9 @@ class SACPolicy:
             )
 
         # 初始化温度参数
-        self.log_alpha = torch.nn.Parameter(torch.log(torch.tensor(config.temperature)))
+        self.log_alpha = torch.nn.Parameter(
+            torch.log(torch.tensor(self.config.temperature))
+        )
 
         self.discount = torch.tensor(self.config.discount)
 
@@ -437,6 +437,45 @@ class SACPolicy:
             actions = self.sample_actions({"state": observations}, argmax=deterministic)
             return actions.squeeze(0)  # Remove batch dimension
 
+    def forward_critic_eval(self, obs, actions):
+        """Evaluate Q-values for action selection (used in select_action_v2)"""
+        with torch.no_grad():
+            # Process observations if they're not tensors
+            if isinstance(obs, dict):
+                obs_processed = {}
+                for k, v in obs.items():
+                    if isinstance(v, np.ndarray):
+                        obs_processed[k] = torch.from_numpy(v)
+                        # Add batch dimension if missing
+                        if len(obs_processed[k].shape) == 1:
+                            obs_processed[k] = obs_processed[k].unsqueeze(0)
+                    elif isinstance(v, torch.Tensor):
+                        obs_processed[k] = v
+                        if len(v.shape) == 1:
+                            obs_processed[k] = v.unsqueeze(0)
+                    else:
+                        obs_processed[k] = v
+                obs = obs_processed
+
+            # Process actions
+            if isinstance(actions, np.ndarray):
+                actions = torch.from_numpy(actions).float()
+            elif not isinstance(actions, torch.Tensor):
+                actions = torch.tensor(actions).float()
+
+            # Add batch dimension if missing
+            if len(actions.shape) == 1:
+                actions = actions.unsqueeze(0)
+
+            # Only use continuous action part for critic evaluation
+            if self.config.num_discrete_actions is not None and actions.shape[-1] > 3:
+                actions = actions[..., :-1]  # Remove discrete action
+
+            # Forward through critic
+            q_values = self.critic_forward(obs, actions, use_target=False)
+
+            return q_values
+
     def train_step(
         self, batch: dict[str, Tensor], critic_only=False
     ) -> dict[str, float]:
@@ -500,9 +539,9 @@ def get_eval_transform():
     )
 
 
-def to_torch(obj):
+def dict_data_to_torch(obj, image_transform=None):
     if isinstance(obj, np.ndarray):
-        return torch.from_numpy(obj)
+        return torch.from_numpy(obj).float()
     elif isinstance(obj, dict):
         d = {}
         for k, v in obj.items():
@@ -512,15 +551,15 @@ def to_torch(obj):
                 elif len(v.shape) == 4:
                     images = []
                     for image in v:
-                        images.append(get_train_transform()(image).unsqueeze(0))
+                        images.append(image_transform(image).unsqueeze(0))
                     d[k] = torch.cat(images, dim=0)
             else:
-                d[k] = to_torch(v)
+                d[k] = dict_data_to_torch(v, image_transform=image_transform)
 
         return d
 
     elif isinstance(obj, (list, tuple)):
-        t = [to_torch(x) for x in obj]
+        t = [dict_data_to_torch(x, image_transform=image_transform) for x in obj]
         return tuple(t) if isinstance(obj, tuple) else t
     else:
         return obj
@@ -559,9 +598,7 @@ def test_learner(config: SACConfig):
     demo_iterator = demo_buffer.get_iterator(sample_args={"batch_size": 4})
     demo_batch = next(demo_iterator)
 
-    from torch.utils.data._utils.collate import default_collate
-
-    demo_batch = to_torch(demo_batch)
+    demo_batch = dict_data_to_torch(demo_batch, image_transform=get_train_transform())
 
     print("Creating SAC agent...")
     agent = SACPolicy(config)
@@ -576,7 +613,7 @@ def test_learner(config: SACConfig):
 
 if __name__ == "__main__":
     # 测试配置
-    config = SACConfig()
+    config = tyro.cli(SACConfig)
 
     print("Starting test_learner...")
     try:

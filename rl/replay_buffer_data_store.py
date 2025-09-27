@@ -159,7 +159,6 @@ class ReplayBufferDataStore(DataStoreBase):
 
         while True:
             batch = self.sample(batch_size)
-            # if device is not None:
 
             yield batch
 
