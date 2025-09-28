@@ -18,7 +18,13 @@ from serl_launcher.serl_launcher.utils.logging_utils import RecordEpisodeStatist
 from serl_launcher.serl_launcher.utils.timer_utils import Timer
 from rl.envs_temp import get_environment
 from rl.replay_buffer_data_store import ReplayBufferDataStore
-from rl.sac_policy import SACPolicy, SACConfig, dict_data_to_torch, get_train_transform
+from rl.sac_policy import (
+    SACPolicy,
+    SACConfig,
+    dict_data_to_torch,
+    get_train_transform,
+    get_eval_transform,
+)
 from utils.tools import get_device, print_dict_structure
 
 
@@ -31,7 +37,8 @@ class Config:
     ip: str = "localhost"
     port: int = 5588
     demo_path: Optional[List[str]] = field(default=None)
-    checkpoint_path: str = "outputs/debug"
+    checkpoint_path: str = "outputs/torch_rlpd/debug"
+    resume_checkpoint: Optional[str] = None  # 恢复训练的checkpoint路径
     eval_n_trajs: int = 0
     save_video: bool = False
     debug: bool = False
@@ -40,15 +47,15 @@ class Config:
 
     # Training parameters
     max_steps: int = 1000000
-    random_steps: int = 2000
-    batch_size: int = 512
-    training_starts: int = 2000
-    replay_buffer_capacity: int = 1000000
-    cta_ratio: int = 1  # critic to actor update ratio
-    steps_per_update: int = 200  # steps between network updates
-    log_period: int = 1000
-    checkpoint_period: int = 10000
-    buffer_period: int = 25000  # steps between buffer saves
+    random_steps: int = 0
+    batch_size: int = 8  # 256
+    training_starts: int = 100
+    replay_buffer_capacity: int = 200000
+    cta_ratio: int = 2  # critic to actor update ratio
+    steps_per_update: int = 50  # steps between network updates
+    log_period: int = 100
+    checkpoint_period: int = 4000
+    buffer_period: int = 2000  # steps between buffer saves
     image_keys: List[str] = field(default_factory=lambda: ["rgb", "wrist"])
 
 
@@ -89,7 +96,7 @@ def concat_batches(batch1, batch2, axis=0):
             else:
                 return np.concatenate([batch1, batch2], axis=axis)
         else:
-            return batch1
+            raise ValueError("Unsupported batch data type")
 
 
 def print_green(x):
@@ -157,10 +164,8 @@ def actor(config, agent, data_store, intvn_data_store, env, bc_agent=None):
     # Function to update the agent with new params
     def update_params(params):
         nonlocal agent
-        # PyTorch风格的参数更新
-        for name, param in agent.named_parameters():
-            if name in params:
-                param.data.copy_(params[name])
+        # 使用新的load_params方法更新参数
+        agent.load_params(params)
 
     client.recv_network_callback(update_params)
 
@@ -177,6 +182,8 @@ def actor(config, agent, data_store, intvn_data_store, env, bc_agent=None):
     intervention_count = 0
     intervention_steps = 0
 
+    eval_image_transform = get_eval_transform()
+
     pbar = tqdm.tqdm(range(start_step, config.max_steps), dynamic_ncols=True)
     for step in pbar:
         timer.tick("total")
@@ -185,15 +192,14 @@ def actor(config, agent, data_store, intvn_data_store, env, bc_agent=None):
             if step < config.random_steps:
                 actions = env.action_space.sample()
             else:
-                actions = agent.sample_actions(
-                    obs,
-                    argmax=False,
-                )
-                # actions = select_action(actions, bc_agent, obs, client)
+                obs_torch = dict_data_to_torch(obs, eval_image_transform)
+                actions = agent.sample_actions(obs_torch, argmax=False)
+
                 actions = select_action_v2(actions, bc_agent, obs, agent)
+
                 if isinstance(actions, torch.Tensor):
                     actions = actions.cpu().numpy()
-                actions = np.asarray(actions)
+                actions = np.asarray(actions).squeeze()
 
         # Step environment
         with timer.context("step_env"):
@@ -233,6 +239,8 @@ def actor(config, agent, data_store, intvn_data_store, env, bc_agent=None):
 
             obs = next_obs
             if done or truncated:
+                print(f"Episode done at step {step}, return: {running_return}")
+
                 info["episode"]["intervention_count"] = intervention_count
                 info["episode"]["intervention_steps"] = intervention_steps
                 stats = {"environment": info}  # send stats to the learner to log
@@ -273,12 +281,16 @@ def actor(config, agent, data_store, intvn_data_store, env, bc_agent=None):
 
 
 def learner(
-    config: Config, agent: SACPolicy, replay_buffer, demo_buffer, wandb_logger=None
+    config: Config,
+    agent: SACPolicy,
+    replay_buffer,
+    demo_buffer,
+    wandb_logger=None,
+    start_step: int = 0,
 ):
     """
     The learner loop, which runs when "--learner" is set to True.
     """
-    start_step = 0  # 简化版本，暂时不支持从checkpoint恢复
     step = start_step
 
     def stats_callback(type: str, payload: dict) -> dict:
@@ -316,9 +328,7 @@ def learner(
     pbar.close()
 
     # send the initial network to the actor
-    server.publish_network(
-        {name: param.data.clone() for name, param in agent.named_parameters()}
-    )
+    server.publish_network(agent.get_params())
     print_green("sent initial network to actor")
 
     # 50/50 sampling from RLPD, half from demo and half from online experience
@@ -338,6 +348,8 @@ def learner(
     # wait till the replay buffer is filled with enough data
     timer = Timer()
 
+    train_image_transform = get_train_transform()
+
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
     ):
@@ -345,55 +357,103 @@ def learner(
         # This makes training on GPU faster by reducing the large batch transfer time from CPU to GPU
         for critic_step in range(config.cta_ratio - 1):
             with timer.context("sample_replay_buffer"):
-                batch = next(replay_iterator)
+                replay_batch = next(replay_iterator)
                 demo_batch = next(demo_iterator)
-                batch = concat_batches(batch, demo_batch, axis=0)
+                batch = concat_batches(replay_batch, demo_batch, axis=0)
+                batch = dict_data_to_torch(batch, train_image_transform)
 
             with timer.context("train_critics"):
-                batch = dict_data_to_torch(batch, get_train_transform())
                 update_info = agent.train_step(batch, critic_only=True)
 
         with timer.context("train"):
-            batch = next(replay_iterator)
+            replay_batch = next(replay_iterator)
             demo_batch = next(demo_iterator)
-            batch = concat_batches(batch, demo_batch, axis=0)
-            batch = dict_data_to_torch(batch, get_train_transform())
+            batch = concat_batches(replay_batch, demo_batch, axis=0)
+            batch = dict_data_to_torch(batch, train_image_transform)
+
             update_info = agent.train_step(batch, critic_only=False)
+
         # publish the updated network
         if step > 0 and step % (config.steps_per_update) == 0:
-            server.publish_network(
-                {name: param.data.clone() for name, param in agent.named_parameters()}
-            )
+            server.publish_network(agent.get_params())
 
         if step % config.log_period == 0 and wandb_logger:
             wandb_logger.log(update_info, step=step)
             wandb_logger.log({"timer": timer.get_average_times()}, step=step)
 
         if step > 0 and step % config.checkpoint_period == 0:
-            pass
+            # 保存checkpoint
+            checkpoint_dir = os.path.join(config.checkpoint_path, "checkpoints")
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            checkpoint_file = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
 
-    ##############################################################################
+            # 保存完整的训练状态
+            additional_info = {
+                "replay_buffer_size": len(replay_buffer),
+                "demo_buffer_size": len(demo_buffer),
+                "config": config,
+                "timer_stats": timer.get_average_times() if "timer" in locals() else {},
+            }
+            agent.save_checkpoint(
+                checkpoint_file, step=step, additional_info=additional_info
+            )
+            print_green(f"Saved checkpoint at step {step}: {checkpoint_file}")
 
 
-def create_replay_buffer_and_wandb_logger(config: Config, env, include_grasp_penalty):
-    replay_buffer = ReplayBufferDataStore(
-        env.observation_space,
-        env.action_space,
-        capacity=config.replay_buffer_capacity,
-        include_grasp_penalty=include_grasp_penalty,
-    )
-    # set up wandb and logging
-    wandb_logger = make_wandb_logger(
-        project="hil-serl",
-        description=config.exp_name,
-        debug=config.debug,
-        mode=config.wandb_mode,
-        output_dir=config.wandb_output_dir,
-    )
-    return replay_buffer, wandb_logger
+##############################################################################
+
+
+def load_demo_data(config, demo_buffer):
+    assert config.demo_path is not None  # TODO
+    for path in config.demo_path:
+        with open(path, "rb") as f:
+            transitions = pkl.load(f)
+            for transition in transitions:
+                if "infos" in transition and "grasp_penalty" in transition["infos"]:
+                    transition["grasp_penalty"] = transition["infos"]["grasp_penalty"]
+                demo_buffer.insert(transition)
+
+
+def resume_buffer_from_checkpoint(config, replay_buffer, demo_buffer):
+    if config.checkpoint_path is not None and os.path.exists(
+        os.path.join(config.checkpoint_path, "buffer")
+    ):
+        for file in glob.glob(os.path.join(config.checkpoint_path, "buffer/*.pkl")):
+            with open(file, "rb") as f:
+                transitions = pkl.load(f)
+                for transition in transitions:
+                    replay_buffer.insert(transition)
+        print_green(
+            f"Loaded previous buffer data. Replay buffer size: {len(replay_buffer)}"
+        )
+
+    if config.checkpoint_path is not None and os.path.exists(
+        os.path.join(config.checkpoint_path, "demo_buffer")
+    ):
+        for file in glob.glob(
+            os.path.join(config.checkpoint_path, "demo_buffer/*.pkl")
+        ):
+            with open(file, "rb") as f:
+                transitions = pkl.load(f)
+                for transition in transitions:
+                    demo_buffer.insert(transition)
+        print_green(
+            f"Loaded previous demo buffer data. Demo buffer size: {len(demo_buffer)}"
+        )
+
+
+def fake_bc_agent(obs):
+    # 返回固定的动作，可以根据需要调整
+    return np.zeros(3)  # 只返回3维动作
 
 
 def main(config: Config):
+    config.checkpoint_path = os.path.join(
+        config.checkpoint_path, time.strftime("%Y%m%d-%H%M")
+    )
+    os.makedirs(config.checkpoint_path, exist_ok=True)
+    print_green(f"Experiment outputs will be saved to: {config.checkpoint_path}")
+
     env = get_environment()
     env = RecordEpisodeStatistics(env)
 
@@ -402,21 +462,48 @@ def main(config: Config):
     agent = SACPolicy(sac_config)
     include_grasp_penalty = True
 
-    # 简化版本的 bc_agent
     bc_agent = None
+    # bc_agent = fake_bc_agent
 
-    def fake_bc_agent(obs):
-        # 返回固定的动作，可以根据需要调整
-        return np.zeros(3)  # 只返回3维动作
+    # 检查是否需要从checkpoint恢复训练
+    resume_step = 0
+    if config.resume_checkpoint and os.path.exists(config.resume_checkpoint):
+        print_green(f"Loading checkpoint from: {config.resume_checkpoint}")
+        try:
+            checkpoint_metadata = agent.load_checkpoint(config.resume_checkpoint)
+            resume_step = checkpoint_metadata.get("step", 0)
+            print_green(f"Resumed training from step: {resume_step}")
 
-    bc_agent = fake_bc_agent
+            # 如果checkpoint中有额外的配置信息，可以在这里使用
+            additional_info = checkpoint_metadata.get("additional_info", {})
+            if "timer_stats" in additional_info:
+                print_green(
+                    f"Previous training timer stats: {additional_info['timer_stats']}"
+                )
 
-    # TODO resume training
+        except Exception as e:
+            print(f"Failed to load checkpoint: {e}")
+            print_green("Starting training from scratch")
+            resume_step = 0
+    elif config.resume_checkpoint:
+        print(f"Checkpoint file not found: {config.resume_checkpoint}")
+        print_green("Starting training from scratch")
 
     if config.learner:
+        # set up wandb and logging
+        wandb_logger = make_wandb_logger(
+            project="hil-serl",
+            description=config.exp_name,
+            debug=config.debug,
+            mode=config.wandb_mode,
+            output_dir=config.wandb_output_dir,
+        )
 
-        replay_buffer, wandb_logger = create_replay_buffer_and_wandb_logger(
-            config, env, include_grasp_penalty
+        replay_buffer = ReplayBufferDataStore(
+            env.observation_space,
+            env.action_space,
+            capacity=config.replay_buffer_capacity,
+            include_grasp_penalty=include_grasp_penalty,
         )
         demo_buffer = ReplayBufferDataStore(
             env.observation_space,
@@ -425,44 +512,11 @@ def main(config: Config):
             include_grasp_penalty=include_grasp_penalty,
         )
 
-        assert config.demo_path is not None
-        for path in config.demo_path:
-            with open(path, "rb") as f:
-                transitions = pkl.load(f)
-                for transition in transitions:
-                    if "infos" in transition and "grasp_penalty" in transition["infos"]:
-                        transition["grasp_penalty"] = transition["infos"][
-                            "grasp_penalty"
-                        ]
-                    demo_buffer.insert(transition)
+        load_demo_data(config, demo_buffer)
+        resume_buffer_from_checkpoint(config, replay_buffer, demo_buffer)
+
         print_green(f"demo buffer size: {len(demo_buffer)}")
         print_green(f"online buffer size: {len(replay_buffer)}")
-
-        if config.checkpoint_path is not None and os.path.exists(
-            os.path.join(config.checkpoint_path, "buffer")
-        ):
-            for file in glob.glob(os.path.join(config.checkpoint_path, "buffer/*.pkl")):
-                with open(file, "rb") as f:
-                    transitions = pkl.load(f)
-                    for transition in transitions:
-                        replay_buffer.insert(transition)
-            print_green(
-                f"Loaded previous buffer data. Replay buffer size: {len(replay_buffer)}"
-            )
-
-        if config.checkpoint_path is not None and os.path.exists(
-            os.path.join(config.checkpoint_path, "demo_buffer")
-        ):
-            for file in glob.glob(
-                os.path.join(config.checkpoint_path, "demo_buffer/*.pkl")
-            ):
-                with open(file, "rb") as f:
-                    transitions = pkl.load(f)
-                    for transition in transitions:
-                        demo_buffer.insert(transition)
-            print_green(
-                f"Loaded previous demo buffer data. Demo buffer size: {len(demo_buffer)}"
-            )
 
         # learner loop
         print_green("starting learner loop")
@@ -472,11 +526,12 @@ def main(config: Config):
             replay_buffer,
             demo_buffer=demo_buffer,
             wandb_logger=wandb_logger,
+            start_step=resume_step,
         )
 
     elif config.actor:
-        data_store = QueuedDataStore(50000)  # the queue size on the actor
-        intvn_data_store = QueuedDataStore(50000)
+        data_store = QueuedDataStore(50000)
+        intvn_data_store = QueuedDataStore(50000)  # demo_buffer
 
         # actor loop
         print_green("starting actor loop")
@@ -489,7 +544,11 @@ if __name__ == "__main__":
 
 
 """
+# 从头开始训练
 python rl/train.py --learner --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --debug --max_steps 100
 
 python rl/train.py --actor --debug --max_steps 100
+
+# 从checkpoint恢复训练
+python rl/train.py --learner --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --resume_checkpoint "outputs/torch_rlpd/debug/checkpoints/checkpoint_4000.pt" --debug --max_steps 200
 """

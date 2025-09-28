@@ -110,6 +110,8 @@ class SACPolicy:
         if self.config.num_discrete_actions is not None:
             discrete_action_value = self.discrete_critic(batch)
             discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+            # {0, 1, 2} -> [-1, 1]
+            discrete_action = discrete_action.float() - 1.0
             actions = torch.cat([actions, discrete_action], dim=-1)
 
         return actions
@@ -220,19 +222,6 @@ class SACPolicy:
         actions = dist.rsample()
         log_probs = dist.log_prob(actions)
 
-        # 如果有离散动作，也需要处理
-        if self.config.num_discrete_actions is not None:
-            # 对于离散动作部分，我们需要从离散critic获取Q值
-            discrete_q_values = self.discrete_critic_forward(
-                observations=observations,
-                use_target=False,
-            )
-            # 使用softmax来获得离散动作的概率分布
-            discrete_action_probs = F.softmax(discrete_q_values, dim=-1)
-            discrete_entropy = -(
-                discrete_action_probs * torch.log(discrete_action_probs + 1e-8)
-            ).sum(dim=-1)
-
         # 计算Q值（只用连续动作部分）
         q_values = self.critic_forward(
             observations=observations,
@@ -247,11 +236,6 @@ class SACPolicy:
 
         # Actor loss = E[alpha * log_prob - Q(s,a)]
         actor_loss = (alpha * log_probs - min_q).mean()
-
-        # 如果有离散动作，加上离散动作的熵奖励
-        if self.config.num_discrete_actions is not None:
-            # 这部分可以根据具体需求调整权重
-            actor_loss += -0.01 * discrete_entropy.mean()
 
         return actor_loss
 
@@ -286,7 +270,7 @@ class SACPolicy:
         # In the buffer we have the full action space (continuous + discrete)
         # We need to split them before concatenating them in the critic forward
         actions_discrete: Tensor = actions[:, -1:].clone()  # 固定取最后1维
-        # Cast env action from [-1, 1] to {0, 1, 2} (same as JAX version)
+        # [-1,1] → {0, 1, 2}
         actions_discrete = torch.round(actions_discrete).long() + 1
 
         discrete_penalties = grasp_penalty
@@ -508,6 +492,166 @@ class SACPolicy:
 
         return metrics
 
+    def get_params(self) -> dict[str, torch.Tensor]:
+        """
+        导出所有网络参数为字典格式，用于checkpoint保存和进程间通信
+
+        Returns:
+            包含所有网络参数的字典
+        """
+        params = {}
+
+        # Actor网络参数
+        for name, param in self.actor.named_parameters():
+            params[f"actor.{name}"] = param.data.clone()
+
+        # Critic网络参数
+        for name, param in self.critic_ensemble.named_parameters():
+            params[f"critic_ensemble.{name}"] = param.data.clone()
+
+        # Critic目标网络参数
+        for name, param in self.critic_target.named_parameters():
+            params[f"critic_target.{name}"] = param.data.clone()
+
+        # 离散Critic网络参数（如果存在）
+        if self.config.num_discrete_actions is not None:
+            for name, param in self.discrete_critic.named_parameters():
+                params[f"discrete_critic.{name}"] = param.data.clone()
+
+            for name, param in self.discrete_critic_target.named_parameters():
+                params[f"discrete_critic_target.{name}"] = param.data.clone()
+
+        # 温度参数
+        params["log_alpha"] = self.log_alpha.data.clone()
+
+        return params
+
+    def load_params(self, params: dict[str, torch.Tensor]) -> None:
+        """
+        从字典格式加载网络参数
+
+        Args:
+            params: 包含网络参数的字典
+        """
+        # 加载Actor网络参数
+        for name, param in self.actor.named_parameters():
+            param_key = f"actor.{name}"
+            if param_key in params:
+                param.data.copy_(params[param_key])
+
+        # 加载Critic网络参数
+        for name, param in self.critic_ensemble.named_parameters():
+            param_key = f"critic_ensemble.{name}"
+            if param_key in params:
+                param.data.copy_(params[param_key])
+
+        # 加载Critic目标网络参数
+        for name, param in self.critic_target.named_parameters():
+            param_key = f"critic_target.{name}"
+            if param_key in params:
+                param.data.copy_(params[param_key])
+
+        # 加载离散Critic网络参数（如果存在）
+        if self.config.num_discrete_actions is not None:
+            for name, param in self.discrete_critic.named_parameters():
+                param_key = f"discrete_critic.{name}"
+                if param_key in params:
+                    param.data.copy_(params[param_key])
+
+            for name, param in self.discrete_critic_target.named_parameters():
+                param_key = f"discrete_critic_target.{name}"
+                if param_key in params:
+                    param.data.copy_(params[param_key])
+
+        # 加载温度参数
+        if "log_alpha" in params:
+            self.log_alpha.data.copy_(params["log_alpha"])
+
+    def save_checkpoint(
+        self, filepath: str, step: int = 0, additional_info: dict = None
+    ) -> None:
+        """
+        保存完整的checkpoint到文件，包含所有训练状态
+
+        Args:
+            filepath: checkpoint文件路径
+            step: 当前训练步数
+            additional_info: 额外信息字典
+        """
+        checkpoint = {
+            "params": self.get_params(),
+            "config": self.config,
+            "step": step,
+            "optimizer_states": {
+                "actor_optimizer": self.actor_optimizer.state_dict(),
+                "critic_optimizer": self.critic_optimizer.state_dict(),
+                "temperature_optimizer": self.temperature_optimizer.state_dict(),
+            },
+        }
+
+        # 添加离散critic优化器状态（如果存在）
+        if hasattr(self, "discrete_critic_optimizer"):
+            checkpoint["optimizer_states"][
+                "discrete_critic_optimizer"
+            ] = self.discrete_critic_optimizer.state_dict()
+
+        # 添加额外信息
+        if additional_info:
+            checkpoint["additional_info"] = additional_info
+
+        torch.save(checkpoint, filepath)
+
+    def load_checkpoint(self, filepath: str) -> dict:
+        """
+        从文件加载完整的checkpoint，恢复所有训练状态
+
+        Args:
+            filepath: checkpoint文件路径
+
+        Returns:
+            包含训练元数据的字典（步数、额外信息等）
+        """
+        checkpoint = torch.load(filepath, map_location="cpu", weights_only=False)
+
+        # 加载网络参数
+        self.load_params(checkpoint["params"])
+
+        # 加载优化器状态
+        if "optimizer_states" in checkpoint:
+            optimizer_states = checkpoint["optimizer_states"]
+
+            if "actor_optimizer" in optimizer_states:
+                self.actor_optimizer.load_state_dict(
+                    optimizer_states["actor_optimizer"]
+                )
+
+            if "critic_optimizer" in optimizer_states:
+                self.critic_optimizer.load_state_dict(
+                    optimizer_states["critic_optimizer"]
+                )
+
+            if "temperature_optimizer" in optimizer_states:
+                self.temperature_optimizer.load_state_dict(
+                    optimizer_states["temperature_optimizer"]
+                )
+
+            # 加载离散critic优化器状态（如果存在）
+            if (
+                hasattr(self, "discrete_critic_optimizer")
+                and "discrete_critic_optimizer" in optimizer_states
+            ):
+                self.discrete_critic_optimizer.load_state_dict(
+                    optimizer_states["discrete_critic_optimizer"]
+                )
+
+        # 返回训练元数据
+        metadata = {
+            "step": checkpoint.get("step", 0),
+            "additional_info": checkpoint.get("additional_info", {}),
+        }
+
+        return metadata
+
 
 def get_train_transform():
     """need CxHxW input"""
@@ -548,13 +692,18 @@ def dict_data_to_torch(obj, image_transform=None):
             if k in ["rgb", "wrist"]:
                 if len(v.shape) == 3:
                     v = v[np.newaxis, ...]  # Add batch dimension if missing
-                elif len(v.shape) == 4:
-                    images = []
-                    for image in v:
-                        images.append(image_transform(image).unsqueeze(0))
-                    d[k] = torch.cat(images, dim=0)
-            else:
-                d[k] = dict_data_to_torch(v, image_transform=image_transform)
+
+                assert v.shape[-1] == 3, f"Expected C=3, got {v.shape}"
+                images = []
+                for image in v:
+                    images.append(image_transform(image).unsqueeze(0))
+                v = torch.cat(images, dim=0)
+
+            elif k in ["state"]:
+                if len(v.shape) == 3:
+                    v = v[:, 0, :]  # Remove extra dimension if present
+
+            d[k] = dict_data_to_torch(v, image_transform=image_transform)
 
         return d
 

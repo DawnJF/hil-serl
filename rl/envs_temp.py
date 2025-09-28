@@ -87,7 +87,7 @@ class Fake_UR_Platform_Env(gym.Env):
 
     def reset(self, **kwargs):
         self.curr_path_length = 0
-        time.sleep(2)
+        time.sleep(0.2)
         return copy.deepcopy(self.fake_obs), {"succeed": False}
 
 
