@@ -737,7 +737,6 @@ def test_learner(config: SACConfig):
         action_space,
         capacity=config.replay_buffer_capacity,
         include_grasp_penalty=True,
-        image_transform=get_train_transform(),
     )
     for path in config.demo_path:
         with open(path, "rb") as f:

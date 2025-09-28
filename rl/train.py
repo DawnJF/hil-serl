@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 import copy
 import pickle as pkl
+from torch.utils.tensorboard import SummaryWriter
 from agentlace.trainer import TrainerServer, TrainerClient, TrainerConfig
 from agentlace.data.data_store import QueuedDataStore
 
@@ -42,8 +43,6 @@ class Config:
     eval_n_trajs: int = 0
     save_video: bool = False
     debug: bool = False
-    wandb_mode: str = "offline"
-    wandb_output_dir: Optional[str] = None
 
     # Training parameters
     max_steps: int = 1000000
@@ -67,17 +66,34 @@ def make_trainer_config(port_number: int = 5588, broadcast_port: int = 5589):
     )
 
 
-def make_wandb_logger(
-    project, description, debug=False, mode="offline", output_dir=None
-):
-    """Simple wandb logger placeholder"""
+def make_tensorboard_logger(log_dir, debug=False):
+    """Create tensorboard SummaryWriter"""
+    writer = SummaryWriter(log_dir)
 
-    class DummyLogger:
+    class TensorboardLogger:
+        def __init__(self, writer, debug=False):
+            self.writer = writer
+            self.debug = debug
+
         def log(self, data, step=None):
-            if debug:
+            if self.debug:
                 print(f"Step {step}: {data}")
 
-    return DummyLogger()
+            if step is not None:
+                for key, value in data.items():
+                    if isinstance(value, dict):
+                        for sub_key, sub_value in value.items():
+                            if isinstance(sub_value, (int, float, np.number)):
+                                self.writer.add_scalar(
+                                    f"{key}/{sub_key}", sub_value, step
+                                )
+                    elif isinstance(value, (int, float, np.number)):
+                        self.writer.add_scalar(key, value, step)
+
+        def close(self):
+            self.writer.close()
+
+    return TensorboardLogger(writer, debug)
 
 
 device = get_device()
@@ -285,7 +301,7 @@ def learner(
     agent: SACPolicy,
     replay_buffer,
     demo_buffer,
-    wandb_logger=None,
+    tb_logger=None,
     start_step: int = 0,
 ):
     """
@@ -297,8 +313,8 @@ def learner(
         """Callback for when server receives stats request."""
 
         if type == "send-stats":
-            if wandb_logger is not None:
-                wandb_logger.log(payload, step=step)
+            if tb_logger is not None:
+                tb_logger.log(payload, step=step)
         else:
             raise ValueError(f"Invalid request type: {type}")
 
@@ -377,9 +393,9 @@ def learner(
         if step > 0 and step % (config.steps_per_update) == 0:
             server.publish_network(agent.get_params())
 
-        if step % config.log_period == 0 and wandb_logger:
-            wandb_logger.log(update_info, step=step)
-            wandb_logger.log({"timer": timer.get_average_times()}, step=step)
+        if step % config.log_period == 0 and tb_logger:
+            tb_logger.log(update_info, step=step)
+            tb_logger.log({"timer": timer.get_average_times()}, step=step)
 
         if step > 0 and step % config.checkpoint_period == 0:
             # 保存checkpoint
@@ -490,13 +506,10 @@ def main(config: Config):
         print_green("Starting training from scratch")
 
     if config.learner:
-        # set up wandb and logging
-        wandb_logger = make_wandb_logger(
-            project="hil-serl",
-            description=config.exp_name,
+        # set up tensorboard logging
+        tb_logger = make_tensorboard_logger(
+            log_dir=config.checkpoint_path,
             debug=config.debug,
-            mode=config.wandb_mode,
-            output_dir=config.wandb_output_dir,
         )
 
         replay_buffer = ReplayBufferDataStore(
@@ -525,7 +538,7 @@ def main(config: Config):
             agent,
             replay_buffer,
             demo_buffer=demo_buffer,
-            wandb_logger=wandb_logger,
+            tb_logger=tb_logger,
             start_step=resume_step,
         )
 

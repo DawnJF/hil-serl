@@ -32,7 +32,6 @@ class ReplayBufferDataStore(DataStoreBase):
         action_space: gym.Space,
         capacity: int,
         include_grasp_penalty: bool = False,
-        image_transform: Optional[Any] = None,
     ):
         super().__init__(capacity)
 
@@ -40,7 +39,6 @@ class ReplayBufferDataStore(DataStoreBase):
         self.action_space = action_space
         self.capacity = capacity
         self.include_grasp_penalty = include_grasp_penalty
-        self.image_transform = image_transform
 
         # Initialize storage arrays
         self.observations = self._init_observation_storage(observation_space, capacity)
