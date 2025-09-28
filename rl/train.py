@@ -157,7 +157,7 @@ def select_action_v2(actions, bc_agent, obs, agent):
 ##############################################################################
 
 
-def actor(config, agent, data_store, intvn_data_store, env, bc_agent=None):
+def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=None):
     """
     This is the actor loop, which runs when "--actor" is set to True.
     """

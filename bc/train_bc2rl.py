@@ -1,7 +1,6 @@
 import sys
 import os
 import time
-import jax
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,24 +8,21 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from dataclasses import dataclass, field
 import numpy as np
-import pandas as pd
 import logging
 from tqdm import tqdm
 import tyro
-from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
 
 sys.path.append(os.getcwd())
-from bc.net import BCActor, BCPolicyWithDiscrete
-from reward_model.net import ResNetClassifier
-from reward_model.pkl_utils import load_pkl, load_pkl_to_reward_model
-from utils.image_augmentations import get_eval_transform, get_train_transform
+from reward_model.pkl_utils import load_pkl
 from utils.tools import get_device, setup_logging
+from rl.net import Actor, DiscreteQCritic
+from rl.sac_policy import get_eval_transform, get_train_transform, dict_data_to_torch
 
 
 @dataclass
 class Args:
-    output_dir: str = "outputs/bc"
+    output_dir: str = "outputs/bc2rl"
     dataset_path: str = None
     model_path: str = None
 
@@ -39,39 +35,43 @@ class Args:
 
     log_interval: int = 10  # 每多少个batch记录一次详细指标
     print_action_interval: int = 500
-    dis_create_weight: list = field(
-        default_factory=lambda: [20.0, 1.0, 20.0]
+    discrete_weight: list = field(
+        default_factory=lambda: [4.0, 1.0, 4.0]
     )  # gripper open/keep/close 权重
 
 
-def get_train_transform():
-    """need CxHxW input"""
-    return transforms.Compose(
-        [
-            # pre-process
-            transforms.Lambda(lambda img: img.squeeze()),
-            transforms.ToTensor(),
-            # data augmentations
-            transforms.ColorJitter(
-                brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1
-            ),
-            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),  # 随机平移
-            # post-process
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
-    )
+class RLActor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.c_actor = Actor(3)
+        self.d_actor = DiscreteQCritic(3)
 
+    def forward(self, batch):
+        # batch should be a dict with observations format
+        dist = self.c_actor(batch)
+        actions = dist.mode()
 
-def get_eval_transform():
-    return transforms.Compose(
-        [
-            # pre-process
-            transforms.Lambda(lambda img: img.squeeze()),
-            transforms.ToTensor(),
-            # post-process
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
-    )
+        discrete_actions = self.d_actor(batch)
+
+        return actions, discrete_actions
+
+    def save_checkpoint(self, path):
+        torch.save(
+            {
+                "continue_actor": self.c_actor.state_dict(),
+                "discrete_actor": self.d_actor.state_dict(),
+            },
+            path,
+        )
+
+    def _load_checkpoint(self, path):
+        checkpoint_dict = torch.load(path)
+        return checkpoint_dict["continue_actor"], checkpoint_dict["discrete_actor"]
+
+    def load_checkpoint(self, path):
+        c_dict, d_dict = self._load_checkpoint(path)
+        self.c_actor.load_state_dict(c_dict)
+        self.d_actor.load_state_dict(d_dict)
 
 
 class ImagesActionDataset(Dataset):
@@ -89,26 +89,19 @@ class ImagesActionDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-
-        imgs = []
-        for key in ["image1", "image2"]:
-            img = self.data[idx][key]
-            img = self.transform(img)
-            imgs.append(img)
-
-        imgs = torch.stack(imgs, dim=0)  # [N, C, H, W]
+        # 构造observations字典，匹配模型期望的输入格式
+        rgb_img = self.data[idx]["image1"]
+        wrist_img = self.data[idx]["image2"]
 
         state = self.data[idx]["state"]
-        state = state.squeeze()
-        state = torch.tensor(state, dtype=torch.float32)
+
+        # 构造observations字典
+        observations = {"rgb": rgb_img, "wrist": wrist_img, "state": state}
 
         action = self.data[idx]["actions"]
-
         continue_label = torch.tensor(action[:3], dtype=torch.float32)
 
-        """
-        -1, 0, 1 -> 0, 1, 2
-        """
+        # gripper action: -1, 0, 1 -> 0, 1, 2
         if action[-1] <= -0.5:
             gripper_label = torch.tensor(0, dtype=torch.long)
         elif action[-1] < 0.5:
@@ -116,42 +109,9 @@ class ImagesActionDataset(Dataset):
         else:
             gripper_label = torch.tensor(2, dtype=torch.long)
 
-        return imgs, state, continue_label, gripper_label
+        observations = dict_data_to_torch(observations, self.transform)
 
-
-def save_checkpoint(model, path, args):
-    torch.save({"model_state_dict": model.state_dict(), "args": vars(args)}, path)
-    logging.info(f"Checkpoint saved to {path}")
-
-
-def load_checkpoint(model, path):
-    checkpoint_dict = torch.load(path)
-    model.load_state_dict(checkpoint_dict["model_state_dict"])
-    logging.info(f"Checkpoint loaded from {path}")
-
-
-# def test(model_path=None):
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     _, test_images, _, test_labels = load_and_split_data()
-#     # _, _, test_images, test_labels = jax_load_to_reward_model()
-#     dataset = ImageSequenceDataset(
-#         test_images, test_labels, transform=image_normalization
-#     )
-#     dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
-#     model = ResNetClassifier().to(device)
-#     load_checkpoint(model, path=model_path)
-#     model.eval()
-#     correct = 0
-#     total = 0
-#     with torch.no_grad():
-#         for imgs, labels in dataloader:
-#             imgs, labels = imgs.to(device), labels.to(device)
-#             outputs = model(imgs)
-#             _, predicted = torch.max(outputs.data, 1)
-#             total += labels.size(0)
-#             correct += (predicted == labels).sum().item()
-#     accuracy = 100 * correct / total
-#     logging.info(f"Test Accuracy: {accuracy:.2f}% ({correct}/{total})")
+        return observations, continue_label, gripper_label
 
 
 def load_and_split_data(args):
@@ -214,18 +174,12 @@ def load_and_split_data(args):
     logging.info(f"Training samples: {len(train_data)}")
     logging.info(f"Testing samples: {len(test_data)}")
 
-    train_dataset = ImagesActionDataset(
-        train_data,
-        transform=get_train_transform(),
-    )
+    train_dataset = ImagesActionDataset(train_data, transform=get_train_transform())
     train_dataloader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True
     )
 
-    test_dataset = ImagesActionDataset(
-        test_data,
-        transform=get_eval_transform(),
-    )
+    test_dataset = ImagesActionDataset(test_data, transform=get_eval_transform())
     test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
     return train_dataloader, test_dataloader
@@ -245,14 +199,11 @@ def train(args: Args, epochs=100):
 
     train_dataloader, test_dataloader = load_and_split_data(args)
 
-    model = BCPolicyWithDiscrete(args).to(device)
-
-    if args.model_path is not None:
-        load_checkpoint(model, path=args.model_path)
+    model = RLActor().to(device)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=4e-5)
-    weights = torch.tensor(list(args.dis_create_weight), dtype=torch.float32).to(device)
+    weights = torch.tensor(list(args.discrete_weight), dtype=torch.float32).to(device)
     discrete_criterion = nn.CrossEntropyLoss(weight=weights)
 
     global_step = 0
@@ -261,15 +212,17 @@ def train(args: Args, epochs=100):
         model.train()
         total_loss = 0.0
 
-        for batch_idx, (imgs, state, continue_label, discrete_label) in tqdm(
+        for batch_idx, (observations, continue_label, discrete_label) in tqdm(
             enumerate(train_dataloader)
         ):
-            imgs = imgs.to(device)
-            state = state.to(device)
-            continue_label = continue_label.to(device)
-            discrete_label = discrete_label.to(device)
 
-            pred_continue, pred_discrete = model(state, imgs)  # [B, num_classes]action
+            # 移动到设备
+            for key in observations:
+                observations[key] = observations[key].squeeze().to(device)
+            continue_label = continue_label.to(device).squeeze()
+            discrete_label = discrete_label.to(device).squeeze()
+
+            pred_continue, pred_discrete = model(observations)  # 传入observations字典
             continue_loss = criterion(pred_continue, continue_label)
             discrete_loss = discrete_criterion(pred_discrete, discrete_label)  # gripper
 
@@ -288,21 +241,6 @@ def train(args: Args, epochs=100):
             writer.add_scalar("Loss/Discrete_Step", discrete_loss.item(), global_step)
             writer.add_scalar("Epoch_Step", epoch, global_step)
 
-            # 打印预测的action
-            # if batch_idx % args.print_action_interval == 0:
-            #     # 打印第一个样本的预测结果和真实值
-            #     pred_action = predicted[0].detach().cpu().numpy()
-            #     label = label[0].detach().cpu().numpy()
-            #     original_label = original_action[0].detach().cpu().numpy()
-            #     state_values = state[0].detach().cpu().numpy()
-
-            #     logging.info(f"\nBatch {batch_idx}, Step {global_step}:")
-            #     logging.info(f"State:              {state_values}")
-            #     logging.info(f"Predicted action:    {pred_action}")
-            #     logging.info(f"Mapped true action:  {label}")
-            #     logging.info(f"Original true action:{original_label}")
-            #     logging.info(f"Loss: {loss.item():.6f}")
-
         # 计算训练集平均损失和成功率
         avg_loss = total_loss / len(train_dataloader)
 
@@ -312,14 +250,16 @@ def train(args: Args, epochs=100):
         val_loss = 0.0
 
         with torch.no_grad():
-            for imgs, state, continue_label, discrete_label in test_dataloader:
-                imgs, state, continue_label, discrete_label = (
-                    imgs.to(device),
-                    state.to(device),
-                    continue_label.to(device),
-                    discrete_label.to(device),
-                )
-                pred_continue, pred_discrete = model(state, imgs)
+            for observations, continue_label, discrete_label in test_dataloader:
+                # 使用dict_data_to_torch处理观测数据
+
+                # 移动到设备
+                for key in observations:
+                    observations[key] = observations[key].squeeze().to(device)
+                continue_label = continue_label.to(device).squeeze()
+                discrete_label = discrete_label.to(device).squeeze()
+
+                pred_continue, pred_discrete = model(observations)
                 continue_loss = criterion(pred_continue, continue_label)
                 discrete_loss = discrete_criterion(pred_discrete, discrete_label)
                 loss = continue_loss + discrete_loss
@@ -336,7 +276,8 @@ def train(args: Args, epochs=100):
         logging.info("-" * 40)
 
         cp_name = f"{args.output_dir}/checkpoint-{epoch+1}.pth"
-        save_checkpoint(model, path=cp_name, args=args)
+        model.save_checkpoint(cp_name)
+        logging.info(f"Checkpoint saved to {cp_name}")
 
     writer.close()
     logging.info("Tensorboard logging completed.")
@@ -345,30 +286,33 @@ def train(args: Args, epochs=100):
 class ActorWrapper:
     def __init__(self, model_path):
         self.device = get_device()
-        args = Args()
-        self.model = BCPolicyWithDiscrete(args).to(self.device)
-        load_checkpoint(self.model, path=model_path)
+        self.model = RLActor(self.device)
+        self.model.load_checkpoint(model_path)
         self.model.eval()
 
     def predict(self, obs):
-        state = obs["state"]
-        rgb = obs["rgb"]
-        wrist = obs["wrist"]
+        # 构造observations字典，匹配训练时的格式
+        observations = {
+            "state": torch.tensor(obs["state"], dtype=torch.float32)
+            .unsqueeze(0)
+            .to(self.device),
+            "rgb": obs["rgb"],
+            "wrist": obs["wrist"],
+        }
 
-        imgs = []
+        # 使用dict_data_to_torch处理观测数据
+        from rl.sac_policy import dict_data_to_torch, get_eval_transform
 
-        img_transform = get_eval_transform()
+        observations = dict_data_to_torch(
+            observations, image_transform=get_eval_transform()
+        )
 
-        for img in [rgb, wrist]:
-            img = img_transform(img)
-            imgs.append(img)
-        imgs = torch.stack(imgs, dim=0)  # [N, C, H, W]
-        imgs = imgs.unsqueeze(0)  # [1, N, C, H, W]
+        # 移动到设备
+        for key in observations:
+            observations[key] = observations[key].to(self.device)
 
-        imgs = imgs.to(self.device)
-        state = torch.tensor(state, dtype=torch.float32).to(self.device)
         with torch.no_grad():
-            action, gripper = self.model(state, imgs)
+            action, gripper = self.model(observations)
 
         np_action = action.cpu().numpy().squeeze()
         np_gripper = gripper.cpu().numpy().squeeze()

@@ -1,11 +1,7 @@
 from torch.distributions import (
-    MultivariateNormal,
     TanhTransform,
-    Transform,
     TransformedDistribution,
 )
-import torch.nn.functional as F  # noqa: N812
-from torch import Tensor
 from torch.distributions import (
     Normal,
     Independent,
@@ -117,7 +113,7 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
         super().__init__(base_dist, transforms)
 
     def mode(self) -> torch.Tensor:
-        mode = self.base_dist.mode()
+        mode = self.base_dist.mode
         for transform in self.transforms:
             mode = transform(mode)
         return mode
