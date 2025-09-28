@@ -96,6 +96,21 @@ class SACPolicy:
             [self.log_alpha], lr=self.config.learning_rate
         )
 
+    def eval(self):
+        self.actor.eval()
+        self.critic_ensemble.eval()
+        self.critic_target.eval()
+        if self.config.num_discrete_actions is not None:
+            self.discrete_critic.eval()
+            self.discrete_critic_target.eval()
+
+    def freeze_bc_actor(self):
+        self.actor.freeze_bc_params()
+        if self.config.num_discrete_actions is not None:
+            for param in self.discrete_critic.parameters():
+                param.requires_grad = False
+            self.discrete_critic.eval()
+
     @torch.no_grad()
     def sample_actions(self, batch: dict[str, Tensor], argmax) -> Tensor:
         """Select action for inference/evaluation"""
@@ -401,18 +416,6 @@ class SACPolicy:
         )
         q_values = discrete_critic(observations)
         return q_values
-
-    def get_action(
-        self, observations: dict[str, Tensor], deterministic: bool = False
-    ) -> Tensor:
-        """Get action for single observation (for evaluation)"""
-        with torch.no_grad():
-            # Add batch dimension if needed
-            if len(list(observations.values())[0].shape) == 1:
-                observations = {k: v.unsqueeze(0) for k, v in observations.items()}
-
-            actions = self.sample_actions({"state": observations}, argmax=deterministic)
-            return actions.squeeze(0)  # Remove batch dimension
 
     def forward_critic_eval(self, obs, actions):
         """Evaluate Q-values for action selection (used in select_action_v2)"""

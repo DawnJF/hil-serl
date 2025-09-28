@@ -43,11 +43,12 @@ class Config:
     eval_n_trajs: int = 0
     save_video: bool = False
     debug: bool = False
+    freeze_actor: bool = False
 
     # Training parameters
     max_steps: int = 1000000
     random_steps: int = 0
-    batch_size: int = 8  # 256
+    batch_size: int = 256  # 256
     training_starts: int = 100
     replay_buffer_capacity: int = 200000
     cta_ratio: int = 2  # critic to actor update ratio
@@ -162,6 +163,8 @@ def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=
     This is the actor loop, which runs when "--actor" is set to True.
     """
     start_step = 0
+
+    agent.eval()
 
     datastore_dict = {
         "actor_env": data_store,
@@ -309,6 +312,10 @@ def learner(
     """
     step = start_step
 
+    if config.freeze_actor:
+        agent.freeze_bc_actor()
+        print_green("Froze the actor and discrete critic parameters.")
+
     def stats_callback(type: str, payload: dict) -> dict:
         """Callback for when server receives stats request."""
 
@@ -337,7 +344,7 @@ def learner(
         position=0,
         leave=True,
     )
-    while len(replay_buffer) < config.training_starts:
+    while len(replay_buffer) < config.training_starts:  # TODO wait demo buffer also
         pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
         time.sleep(1)
     pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
@@ -420,7 +427,9 @@ def learner(
 
 
 def load_demo_data(config, demo_buffer):
-    assert config.demo_path is not None  # TODO
+    if config.demo_path is None:
+        return
+    print_green(f"Loading demo data from: {config.demo_path}")
     for path in config.demo_path:
         with open(path, "rb") as f:
             transitions = pkl.load(f)

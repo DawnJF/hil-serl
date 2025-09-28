@@ -183,6 +183,18 @@ class Actor(nn.Module):
         # return actions, log_probs, means
         return dist
 
+    def freeze_bc_params(self):
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+        for param in self.network.parameters():
+            param.requires_grad = False
+        for param in self.mean_layer.parameters():
+            param.requires_grad = False
+
+        self.encoder.eval()
+        self.network.eval()
+        self.mean_layer.eval()
+
 
 class CriticHead(nn.Module):
     def __init__(self, input_dim):
