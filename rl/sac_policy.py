@@ -31,7 +31,7 @@ class SACConfig:
     learning_rate: float = 3e-4
     discount: float = 0.99
     soft_target_update_rate: float = 0.005
-    target_entropy: float = -action_dim
+    target_entropy: float = -action_dim / 2
     num_discrete_actions: int = 3  # 改为3，对应 {0, 1, 2}
 
     temperature: float = 1.0
@@ -165,9 +165,7 @@ class SACPolicy:
     def update_actor(self, batch):
         observations: dict[str, Tensor] = batch["observations"]
 
-        loss_actor = self.compute_loss_actor(
-            observations=observations,
-        )
+        loss_actor = self.compute_loss_actor(observations=observations)
 
         self.actor_optimizer.zero_grad()
         loss_actor.backward()
@@ -178,9 +176,7 @@ class SACPolicy:
     def update_temperature(self, batch):
         observations: dict[str, Tensor] = batch["observations"]
 
-        loss_temperature = self.compute_loss_temperature(
-            observations=observations,
-        )
+        loss_temperature = self.compute_loss_temperature(observations=observations)
 
         self.temperature_optimizer.zero_grad()
         loss_temperature.backward()
@@ -250,8 +246,6 @@ class SACPolicy:
             actions = dist.rsample()
             log_probs = dist.log_prob(actions)
 
-        # 温度损失：-log_alpha * (log_probs + target_entropy).detach()
-        # 这里 log_probs 已经在 torch.no_grad() 中计算，所以已经是 detached 的
         temperature_loss = (
             -self.log_alpha * (log_probs + self.config.target_entropy)
         ).mean()
@@ -538,12 +532,16 @@ class SACPolicy:
             param_key = f"actor.{name}"
             if param_key in params:
                 param.data.copy_(params[param_key])
+            else:
+                print(f"Warning: {param_key} not found in params during load.")
 
         # 加载Critic网络参数
         for name, param in self.critic_ensemble.named_parameters():
             param_key = f"critic_ensemble.{name}"
             if param_key in params:
                 param.data.copy_(params[param_key])
+            else:
+                print(f"Warning: {param_key} not found in params during load.")
 
         # 加载Critic目标网络参数
         for name, param in self.critic_target.named_parameters():
@@ -557,15 +555,21 @@ class SACPolicy:
                 param_key = f"discrete_critic.{name}"
                 if param_key in params:
                     param.data.copy_(params[param_key])
+                else:
+                    print(f"Warning: {param_key} not found in params during load.")
 
             for name, param in self.discrete_critic_target.named_parameters():
                 param_key = f"discrete_critic_target.{name}"
                 if param_key in params:
                     param.data.copy_(params[param_key])
+                else:
+                    print(f"Warning: {param_key} not found in params during load.")
 
         # 加载温度参数
         if "log_alpha" in params:
             self.log_alpha.data.copy_(params["log_alpha"])
+        else:
+            print(f"Warning: log_alpha not found in params during load.")
 
     def save_checkpoint(
         self, filepath: str, step: int = 0, additional_info: dict = None
