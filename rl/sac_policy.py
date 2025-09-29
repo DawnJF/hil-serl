@@ -1,7 +1,6 @@
 import os
 import sys
 import pickle as pkl
-import einops
 import gymnasium as gym
 import numpy as np
 import torch
@@ -140,7 +139,7 @@ class SACPolicy:
         next_observations: dict[str, Tensor] = batch["next_observations"]
         done: Tensor = batch["dones"]
 
-        loss_critic = self.compute_loss_critic(
+        loss_critic, info = self.compute_loss_critic(
             observations=observations,
             actions=actions,
             rewards=rewards,
@@ -152,7 +151,7 @@ class SACPolicy:
         loss_critic.backward()
         self.critic_optimizer.step()
 
-        return loss_critic
+        return loss_critic, info
 
     def update_grasp_critic(self, batch):
         actions: Tensor = batch["actions"]
@@ -181,13 +180,13 @@ class SACPolicy:
     def update_actor(self, batch):
         observations: dict[str, Tensor] = batch["observations"]
 
-        loss_actor = self.compute_loss_actor(observations=observations)
+        loss_actor, info = self.compute_loss_actor(observations=observations)
 
         self.actor_optimizer.zero_grad()
         loss_actor.backward()
         self.actor_optimizer.step()
 
-        return loss_actor
+        return loss_actor, info
 
     def update_temperature(self, batch):
         observations: dict[str, Tensor] = batch["observations"]
@@ -249,7 +248,11 @@ class SACPolicy:
         # Actor loss = E[alpha * log_prob - Q(s,a)]
         actor_loss = (alpha * log_probs - predicted_q).mean()
 
-        return actor_loss
+        info = {
+            "temperature": alpha.item(),
+            "entropy": -log_probs.mean().item(),
+        }
+        return actor_loss, info
 
     def compute_loss_temperature(
         self,
@@ -344,7 +347,6 @@ class SACPolicy:
             # 获取下一个状态的动作分布并采样
             next_dist = self.actor(next_observations)
             next_action_preds = next_dist.rsample()
-            next_log_probs = next_dist.log_prob(next_action_preds)
 
             # 计算目标Q值
             q_targets = self.critic_forward(
@@ -357,30 +359,31 @@ class SACPolicy:
             min_q, _ = q_targets.min(dim=0)
 
             # Bellman方程目标：r + gamma * (Q(s',a') - alpha * log_pi(a'|s'))
-            td_target = rewards + (1 - done.float()) * self.discount * min_q
+            target_q = rewards + (1 - done.float()) * self.discount * min_q
 
         # 计算当前Q值预测
         if self.config.num_discrete_actions is not None:
             # 只保留连续动作部分
             actions = actions[:, :-1]
 
-        q_preds = self.critic_forward(
+        predicted_qs = self.critic_forward(
             observations=observations,
             actions=actions,
             use_target=False,
         )
 
-        # 计算损失
         # 复制目标值以匹配ensemble的维度
-        td_target_duplicate = einops.repeat(td_target, "b -> e b", e=q_preds.shape[0])
+        target_qs = target_q.unsqueeze(0).repeat(predicted_qs.shape[0], 1)
 
         # 计算MSE损失
-        critics_loss = (
-            F.mse_loss(
-                input=q_preds, target=td_target_duplicate, reduction="none"
-            ).mean(dim=1)
-        ).sum()
-        return critics_loss
+        critics_loss = F.mse_loss(predicted_qs, target_qs)
+
+        info = {
+            "predicted_qs": predicted_qs.mean().item(),
+            "target_qs": target_qs.mean().item(),
+            "rewards": rewards.mean().item(),
+        }
+        return critics_loss, info
 
     def critic_forward(
         self,
@@ -466,8 +469,9 @@ class SACPolicy:
         metrics_loss = {}
 
         # Update critics
-        critic_loss = self.update_critic(batch)
+        critic_loss, info = self.update_critic(batch)
         metrics_loss["critic_loss"] = critic_loss.item()
+        metrics.update(info)
 
         # Update discrete critic if exists
         if self.config.num_discrete_actions is not None and not self.bc_actor_freezed:
@@ -478,8 +482,9 @@ class SACPolicy:
 
             if not self.bc_actor_freezed:
                 # Update actor
-                actor_loss = self.update_actor(batch)
+                actor_loss, info = self.update_actor(batch)
                 metrics_loss["actor_loss"] = actor_loss.item()
+                metrics.update(info)
 
             # Update temperature if using automatic entropy tuning
 

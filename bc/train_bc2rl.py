@@ -289,23 +289,17 @@ class ActorWrapper:
         self.model = RLActor(self.device)
         self.model.load_checkpoint(model_path)
         self.model.eval()
+        self.image_transform = get_eval_transform()
 
     def predict(self, obs):
         # 构造observations字典，匹配训练时的格式
         observations = {
-            "state": torch.tensor(obs["state"], dtype=torch.float32)
-            .unsqueeze(0)
-            .to(self.device),
+            "state": obs["state"],
             "rgb": obs["rgb"],
             "wrist": obs["wrist"],
         }
 
-        # 使用dict_data_to_torch处理观测数据
-        from rl.sac_policy import dict_data_to_torch, get_eval_transform
-
-        observations = dict_data_to_torch(
-            observations, image_transform=get_eval_transform()
-        )
+        observations = dict_data_to_torch(observations, self.image_transform)
 
         # 移动到设备
         for key in observations:

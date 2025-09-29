@@ -1,8 +1,4 @@
-from typing import OrderedDict
-from franka_env.utils.rotations import euler_2_quat, quat_2_euler
-from franka_env.envs.franka_env import DefaultEnvConfig
 import numpy as np
-import requests
 import copy
 import gymnasium as gym
 import time
@@ -10,8 +6,11 @@ from typing import Dict
 from scipy.spatial.transform import Rotation, Slerp
 import sys
 from PIL import Image
+import os
 
+sys.path.append(os.getcwd())
 sys.path.append("/home/facelesswei/code/debug_UR_Robot_Arm_Show/tools")
+from utils.rotations import euler_2_quat
 from zmq_tools import ZMQClient
 
 
@@ -121,7 +120,7 @@ class UR_Platform_Env(gym.Env):
         self,
         hz=10,
         fake_env=False,
-        config: DefaultEnvConfig = None,
+        config=None,
     ):
         self.client = ZMQClient()
         self.action_scale = config.ACTION_SCALE
@@ -376,31 +375,20 @@ class UR_Platform_Env(gym.Env):
 
     def _send_gripper_command(self, pos: float, mode="binary"):
         """Internal function to send gripper command to the robot."""
-        # print(f"[DEBUG] _send_gripper_command {pos}")
-        print(
-            f"[DEBUG] _send_gripper_command pos:{pos} currgripper: {self.currgripper}"
-        )
+
         if mode == "binary":
-            if (
-                (pos <= -0.5)
-                # and (self.currgripper > 0.85)
-                # and (self.currgripper <= 0.25)
-                and (time.time() - self.last_gripper_act > self.gripper_sleep)
-            ):  # close gripper
+            time_check = time.time() - self.last_gripper_act > self.gripper_sleep
+
+            print(f"[DEBUG] _send_g {pos}({self.currgripper}), {time_check}")
+
+            if (pos <= -0.5) and time_check:  # close gripper
                 self.client.post({"type": "close_gripper"})
-                self.last_gripper_act = time.time()
-                # time.sleep(self.gripper_sleep)
-            elif (
-                (pos >= 0.5)
-                # and (self.currgripper < 0.85)
-                # and (self.currgripper > 0.25)
-                and (time.time() - self.last_gripper_act > self.gripper_sleep)
-            ):  # open gripper
+            elif (pos >= 0.5) and time_check:  # open gripper
                 self.client.post({"type": "open_gripper"})
-                self.last_gripper_act = time.time()
-                # time.sleep(self.gripper_sleep)
             else:
                 return
+            self.last_gripper_act = time.time()
+
         elif mode == "continuous":
             raise NotImplementedError("Continuous gripper control is optional")
 
