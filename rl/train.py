@@ -97,10 +97,6 @@ def make_tensorboard_logger(log_dir, debug=False):
     return TensorboardLogger(writer, debug)
 
 
-device = get_device()
-print(f"Using device: {device}")
-
-
 # 简化版本的 concat_batches 函数
 def concat_batches(batch1, batch2, axis=0):
     """Concatenate two batches along specified axis"""
@@ -184,6 +180,7 @@ def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=
     def update_params(params):
         nonlocal agent
         # 使用新的load_params方法更新参数
+        print("update_params")
         agent.load_params(params)
 
     client.recv_network_callback(update_params)
@@ -337,18 +334,17 @@ def learner(
     server.start(threaded=True)
 
     # Loop to wait until replay_buffer is filled
-    pbar = tqdm.tqdm(
-        total=config.training_starts,
-        initial=len(replay_buffer),
-        desc="Filling up replay buffer",
-        position=0,
-        leave=True,
+    print_green(
+        f"waiting for replay buffer {len(replay_buffer)} / {config.training_starts}"
     )
     while len(replay_buffer) < config.training_starts:  # TODO wait demo buffer also
-        pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
         time.sleep(1)
-    pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
-    pbar.close()
+
+    print_green(
+        f"waiting for demo buffer {len(demo_buffer)} / {config.training_starts}"
+    )
+    while len(demo_buffer) < config.training_starts:
+        time.sleep(1)
 
     # send the initial network to the actor
     server.publish_network(agent.get_params())
@@ -479,6 +475,9 @@ def main(config: Config):
     os.makedirs(config.checkpoint_path, exist_ok=True)
     print_green(f"Experiment outputs will be saved to: {config.checkpoint_path}")
 
+    device = torch.device("cuda:1")
+    print(f"Using device: {device}")
+
     env = get_environment()
     env = RecordEpisodeStatistics(env)
 
@@ -567,7 +566,7 @@ if __name__ == "__main__":
 
 """
 # 从头开始训练
-python rl/train.py --learner --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --debug --max_steps 100
+python rl/train.py --learner --debug --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --max_steps 100
 
 python rl/train.py --actor --debug --max_steps 100
 

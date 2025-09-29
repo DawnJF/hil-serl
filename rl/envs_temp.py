@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Optional
+from typing import Dict, Optional
 import os
 import sys
 import gymnasium as gym
@@ -13,14 +13,19 @@ import numpy as np
 import time
 import copy
 from scipy.spatial.transform import Rotation as R
-from torchvision.transforms.v2 import functional as F
 from gymnasium.spaces import flatten_space, flatten
 
 sys.path.append(os.getcwd())
+from examples.experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
+from examples.experiments.usb_pickup_insertion.wrapper import HumanRewardEnv
 from serl_launcher.serl_launcher.wrappers.chunking import space_stack
 from serl_robot_infra.franka_env.utils.transformations import (
     construct_adjoint_matrix,
     construct_homogeneous_matrix,
+)
+from serl_robot_infra.franka_env.envs.wrappers import (
+    Quat2EulerWrapper,
+    SpacemouseIntervention,
 )
 
 
@@ -344,7 +349,7 @@ class GripperPenaltyWrapper(gym.Wrapper):
         return observation, reward, terminated, truncated, info
 
 
-def get_environment(fake_env=False, save_video=False, debug=False):
+def get_fake_environment(fake_env=False, save_video=False, debug=False):
     proprio_keys = ["tcp_pose", "gripper_pose"]
 
     env = Fake_UR_Platform_Env()
@@ -355,6 +360,64 @@ def get_environment(fake_env=False, save_video=False, debug=False):
     #     env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
     env = GripperPenaltyWrapper(env, penalty=-0.02)
     # env = ImageTransformWrapper(env, config=UREnvConfig())
+    return env
+
+
+class UREnvConfig:
+    SERVER_URL: str = "http://127.0.0.1:5000/"
+    GRASP_POSE: np.ndarray = np.zeros((6,))
+    REWARD_THRESHOLD: np.ndarray = np.zeros((6,))
+    DISPLAY_IMAGE: bool = True
+    GRIPPER_SLEEP: float = 0.6
+    MAX_EPISODE_LENGTH: int = 100
+    JOINT_RESET_PERIOD: int = 0
+    REALSENSE_CAMERAS = {
+        "wrist": {
+            "dim": (1280, 720),
+        },
+        "rgb": {
+            "dim": (1280, 720),
+        },
+    }
+    IMAGE_CROP = {
+        "wrist": lambda img: img[0:300, 0:640],
+        "rgb": lambda img: img[300:420, 390:640],
+    }
+    reset_xyz = np.array([-0.35, -0.5, 0.15])
+    reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
+    RESET_POSE = np.array([*reset_xyz, *reset_euler])
+    ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
+    RANDOM_RESET = False
+
+    RANDOM_XY_RANGE = 0.01
+    RANDOM_RZ_RANGE = 0.1
+    ABS_POSE_LIMIT_HIGH = np.concatenate(
+        [np.array([-0.3, -0.2, 0.25]), reset_euler + np.array([0.1, 0.1, 0.3])]
+    )
+    ABS_POSE_LIMIT_LOW = np.concatenate(
+        [np.array([-0.6, -0.6, 0.055]), reset_euler - np.array([0.1, 0.1, 0.3])]
+    )
+    MAX_EPISODE_LENGTH = 200
+
+    MAX_NUM_TRANSFORMS = 7  # maximum number of transforms to apply
+    ENABLE_TRANSFORMS = True  # whether to enable image transforms
+    RANDOM_ORDER = True  # whether to apply transforms in random order
+    CAMERA_SECTIONS = ["wrist", "rgb"]
+    PROBABILITY = 0.5  # probability to apply image transforms
+
+
+def get_environment(fake_env=False, debug=False):
+    proprio_keys = ["tcp_pose", "gripper_pose"]
+
+    env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
+
+    env = HumanRewardEnv(env)
+    env = SpacemouseIntervention(env)
+    env = RelativeFrame(env, include_relative_pose=False)
+    env = Quat2EulerWrapper(env)
+    env = SERLObsWrapper(env, proprio_keys)
+    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+    env = GripperPenaltyWrapper(env, penalty=-0.02)
     return env
 
 
