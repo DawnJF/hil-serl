@@ -235,19 +235,19 @@ class SACPolicy:
         log_probs = dist.log_prob(actions)
 
         # 计算Q值（只用连续动作部分）
-        q_values = self.critic_forward(
+        predicted_qs = self.critic_forward(
             observations=observations,
             actions=actions,
             use_target=False,
         )
 
         # Match JAX
-        min_q, _ = q_values.mean(dim=0)
+        predicted_q = predicted_qs.mean(dim=0)
 
         alpha = self.log_alpha.exp()
 
         # Actor loss = E[alpha * log_prob - Q(s,a)]
-        actor_loss = (alpha * log_probs - min_q).mean()
+        actor_loss = (alpha * log_probs - predicted_q).mean()
 
         return actor_loss
 
@@ -463,32 +463,34 @@ class SACPolicy:
     ) -> dict[str, float]:
         """Complete training step for SAC"""
         metrics = {}
+        metrics_loss = {}
 
         # Update critics
         critic_loss = self.update_critic(batch)
-        metrics["critic_loss"] = critic_loss.item()
+        metrics_loss["critic_loss"] = critic_loss.item()
 
         # Update discrete critic if exists
         if self.config.num_discrete_actions is not None and not self.bc_actor_freezed:
             discrete_critic_loss = self.update_grasp_critic(batch)
-            metrics["discrete_critic_loss"] = discrete_critic_loss.item()
+            metrics_loss["discrete_critic_loss"] = discrete_critic_loss.item()
 
         if not critic_only:
 
             if not self.bc_actor_freezed:
                 # Update actor
                 actor_loss = self.update_actor(batch)
-                metrics["actor_loss"] = actor_loss.item()
+                metrics_loss["actor_loss"] = actor_loss.item()
 
             # Update temperature if using automatic entropy tuning
 
             temperature_loss = self.update_temperature(batch)
-            metrics["temperature_loss"] = temperature_loss.item()
+            metrics_loss["temperature_loss"] = temperature_loss.item()
             metrics["alpha"] = self.log_alpha.exp().item()
 
         # Update target networks
         self.update_target_networks()
 
+        metrics["loss"] = metrics_loss
         return metrics
 
     def get_params(self) -> dict[str, torch.Tensor]:

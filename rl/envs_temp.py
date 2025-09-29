@@ -349,7 +349,7 @@ class GripperPenaltyWrapper(gym.Wrapper):
         return observation, reward, terminated, truncated, info
 
 
-def get_fake_environment(fake_env=False, save_video=False, debug=False):
+def get_fake_environment():
     proprio_keys = ["tcp_pose", "gripper_pose"]
 
     env = Fake_UR_Platform_Env()

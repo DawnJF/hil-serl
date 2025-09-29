@@ -18,7 +18,7 @@ sys.path.append(os.getcwd())
 from bc.train_bc2rl import RLActor
 from serl_launcher.serl_launcher.utils.logging_utils import RecordEpisodeStatistics
 from serl_launcher.serl_launcher.utils.timer_utils import Timer
-from rl.envs_temp import get_environment
+from rl.envs_temp import get_environment, get_fake_environment
 from rl.replay_buffer_data_store import ReplayBufferDataStore
 from rl.sac_policy import (
     SACPolicy,
@@ -53,7 +53,6 @@ class Config:
     replay_buffer_capacity: int = 200000
     cta_ratio: int = 2  # critic to actor update ratio
     steps_per_update: int = 50  # steps between network updates
-    log_period: int = 100
     checkpoint_period: int = 4000
     buffer_period: int = 2000  # steps between buffer saves
     image_keys: List[str] = field(default_factory=lambda: ["rgb", "wrist"])
@@ -181,7 +180,7 @@ def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=
     def update_params(params):
         nonlocal agent
         # 使用新的load_params方法更新参数
-        print("update_params")
+        print_green("update_params")
         agent.load_params(params)
 
     client.recv_network_callback(update_params)
@@ -275,10 +274,9 @@ def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=
             # dump to pickle file
             buffer_path = os.path.join(config.checkpoint_path, "buffer")
             demo_buffer_path = os.path.join(config.checkpoint_path, "demo_buffer")
-            if not os.path.exists(buffer_path):
-                os.makedirs(buffer_path)
-            if not os.path.exists(demo_buffer_path):
-                os.makedirs(demo_buffer_path)
+
+            os.makedirs(buffer_path, exist_ok=True)
+            os.makedirs(demo_buffer_path, exist_ok=True)
             with open(os.path.join(buffer_path, f"transitions_{step}.pkl"), "wb") as f:
                 pkl.dump(transitions, f)
                 transitions = []
@@ -290,7 +288,7 @@ def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=
 
         timer.tock("total")
 
-        if step % config.log_period == 0:
+        if step % 10 == 0:
             stats = {"timer": timer.get_average_times()}
             client.request("send-stats", stats)
 
@@ -339,6 +337,8 @@ def learner(
     server.register_data_store("actor_env", replay_buffer)
     server.register_data_store("actor_env_intvn", demo_buffer)
     server.start(threaded=True)
+
+    time.sleep(3)  # wait for client to connect
 
     # send the initial network to the actor
     server.publish_network(agent.get_params())
@@ -403,7 +403,7 @@ def learner(
         if step > 0 and step % (config.steps_per_update) == 0:
             server.publish_network(agent.get_params())
 
-        if step % config.log_period == 0 and tb_logger:
+        if tb_logger:
             tb_logger.log(update_info, step=step)
             tb_logger.log({"timer": timer.get_average_times()}, step=step)
 
@@ -485,6 +485,7 @@ def main(config: Config):
     device = torch.device("cuda:1")
     print(f"Using device: {device}")
 
+    # env = get_fake_environment()
     env = get_environment()
     env = RecordEpisodeStatistics(env)
 
