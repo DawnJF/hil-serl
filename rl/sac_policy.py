@@ -48,6 +48,7 @@ class SACPolicy:
 
         # 初始化所有组件
         self._init()
+        self.bc_actor_freezed = False
 
     def _init(self):
         continue_action_dim = self.config.action_dim - 1
@@ -110,6 +111,7 @@ class SACPolicy:
             for param in self.discrete_critic.parameters():
                 param.requires_grad = False
             self.discrete_critic.eval()
+        self.bc_actor_freezed = True
 
     @torch.no_grad()
     def sample_actions(self, batch: dict[str, Tensor], argmax) -> Tensor:
@@ -239,8 +241,8 @@ class SACPolicy:
             use_target=False,
         )
 
-        # 取最小的Q值
-        min_q, _ = q_values.min(dim=0)
+        # Match JAX
+        min_q, _ = q_values.mean(dim=0)
 
         alpha = self.log_alpha.exp()
 
@@ -467,15 +469,16 @@ class SACPolicy:
         metrics["critic_loss"] = critic_loss.item()
 
         # Update discrete critic if exists
-        if self.config.num_discrete_actions is not None:
+        if self.config.num_discrete_actions is not None and not self.bc_actor_freezed:
             discrete_critic_loss = self.update_grasp_critic(batch)
             metrics["discrete_critic_loss"] = discrete_critic_loss.item()
 
         if not critic_only:
 
-            # Update actor
-            actor_loss = self.update_actor(batch)
-            metrics["actor_loss"] = actor_loss.item()
+            if not self.bc_actor_freezed:
+                # Update actor
+                actor_loss = self.update_actor(batch)
+                metrics["actor_loss"] = actor_loss.item()
 
             # Update temperature if using automatic entropy tuning
 

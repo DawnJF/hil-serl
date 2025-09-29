@@ -64,12 +64,12 @@ class RLActor(nn.Module):
             path,
         )
 
-    def _load_checkpoint(self, path):
+    def READ_CHECKPOINT(path):
         checkpoint_dict = torch.load(path)
         return checkpoint_dict["continue_actor"], checkpoint_dict["discrete_actor"]
 
     def load_checkpoint(self, path):
-        c_dict, d_dict = self._load_checkpoint(path)
+        c_dict, d_dict = RLActor.READ_CHECKPOINT(path)
         self.c_actor.load_state_dict(c_dict)
         self.d_actor.load_state_dict(d_dict)
 

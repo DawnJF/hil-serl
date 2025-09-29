@@ -15,6 +15,7 @@ from agentlace.trainer import TrainerServer, TrainerClient, TrainerConfig
 from agentlace.data.data_store import QueuedDataStore
 
 sys.path.append(os.getcwd())
+from bc.train_bc2rl import RLActor
 from serl_launcher.serl_launcher.utils.logging_utils import RecordEpisodeStatistics
 from serl_launcher.serl_launcher.utils.timer_utils import Timer
 from rl.envs_temp import get_environment
@@ -40,16 +41,15 @@ class Config:
     demo_path: Optional[List[str]] = field(default=None)
     checkpoint_path: str = "outputs/torch_rlpd/debug"
     resume_checkpoint: Optional[str] = None  # 恢复训练的checkpoint路径
-    eval_n_trajs: int = 0
-    save_video: bool = False
-    debug: bool = False
+    resume_actor: Optional[str] = None
     freeze_actor: bool = False
+    debug: bool = False
 
     # Training parameters
     max_steps: int = 1000000
     random_steps: int = 0
     batch_size: int = 256  # 256
-    training_starts: int = 100
+    training_starts: int = 150
     replay_buffer_capacity: int = 200000
     cta_ratio: int = 2  # critic to actor update ratio
     steps_per_update: int = 50  # steps between network updates
@@ -78,7 +78,8 @@ def make_tensorboard_logger(log_dir, debug=False):
 
         def log(self, data, step=None):
             if self.debug:
-                print(f"Step {step}: {data}")
+                print(f"Step {step}")
+                print_dict_structure(data)
 
             if step is not None:
                 for key, value in data.items():
@@ -184,6 +185,7 @@ def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=
         agent.load_params(params)
 
     client.recv_network_callback(update_params)
+    print_green("connected to server")
 
     transitions = []
     demo_transitions = []
@@ -309,6 +311,11 @@ def learner(
     """
     step = start_step
 
+    if config.resume_actor is not None:
+        c_dict, d_dict = RLActor.READ_CHECKPOINT(config.resume_actor)
+        agent.actor.load_state_dict(c_dict)
+        agent.discrete_critic.load_state_dict(d_dict)
+
     if config.freeze_actor:
         agent.freeze_bc_actor()
         print_green("Froze the actor and discrete critic parameters.")
@@ -333,11 +340,15 @@ def learner(
     server.register_data_store("actor_env_intvn", demo_buffer)
     server.start(threaded=True)
 
+    # send the initial network to the actor
+    server.publish_network(agent.get_params())
+    print_green("sent initial network to actor")
+
     # Loop to wait until replay_buffer is filled
     print_green(
         f"waiting for replay buffer {len(replay_buffer)} / {config.training_starts}"
     )
-    while len(replay_buffer) < config.training_starts:  # TODO wait demo buffer also
+    while len(replay_buffer) < config.training_starts:
         time.sleep(1)
 
     print_green(
@@ -345,10 +356,6 @@ def learner(
     )
     while len(demo_buffer) < config.training_starts:
         time.sleep(1)
-
-    # send the initial network to the actor
-    server.publish_network(agent.get_params())
-    print_green("sent initial network to actor")
 
     # 50/50 sampling from RLPD, half from demo and half from online experience
     replay_iterator = replay_buffer.get_iterator(
@@ -364,11 +371,11 @@ def learner(
         },
     )
 
-    # wait till the replay buffer is filled with enough data
     timer = Timer()
 
     train_image_transform = get_train_transform()
 
+    print_green("starting learner loop")
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
     ):
@@ -540,7 +547,6 @@ def main(config: Config):
         print_green(f"online buffer size: {len(replay_buffer)}")
 
         # learner loop
-        print_green("starting learner loop")
         learner(
             config,
             agent,
@@ -572,4 +578,12 @@ python rl/train.py --actor --debug --max_steps 100
 
 # 从checkpoint恢复训练
 python rl/train.py --learner --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --resume_checkpoint "outputs/torch_rlpd/debug/checkpoints/checkpoint_4000.pt" --debug --max_steps 200
+
+
+python rl/train.py --learner --freeze_actor --resume_actor outputs/bc2rl_20250928_173221/checkpoint-32.pth 
+"""
+
+
+"""
+
 """
