@@ -286,7 +286,7 @@ def train(args: Args, epochs=100):
 class ActorWrapper:
     def __init__(self, model_path):
         self.device = get_device()
-        self.model = RLActor(self.device)
+        self.model = RLActor().to(self.device)
         self.model.load_checkpoint(model_path)
         self.model.eval()
         self.image_transform = get_eval_transform()

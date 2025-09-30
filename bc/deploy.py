@@ -13,6 +13,7 @@ from rl.envs_temp import (
     UREnvConfig,
     RelativeFrame,
 )
+from serl_robot_infra.franka_env.envs.wrappers import SpacemouseIntervention
 from utils.tools import print_dict_structure
 from bc.train_bc2rl import ActorWrapper
 
@@ -30,7 +31,7 @@ def test_Env():
     config.MAX_EPISODE_LENGTH = 1000
 
     env = UR_Platform_Env(config=config)
-    # env = SpacemouseIntervention(env)
+    env = SpacemouseIntervention(env)
     env = RelativeFrame(env)
     env = Quat2EulerWrapper(env)
     env = SERLObsWrapper(env, proprio_keys=proprio_keys)

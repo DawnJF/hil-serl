@@ -313,6 +313,7 @@ def learner(
         c_dict, d_dict = RLActor.READ_CHECKPOINT(config.resume_actor)
         agent.actor.load_state_dict(c_dict)
         agent.discrete_critic.load_state_dict(d_dict)
+        print_green(f"resume_actor from {config.resume_actor}")
 
     if config.freeze_actor:
         agent.freeze_bc_actor()
@@ -391,17 +392,19 @@ def learner(
             with timer.context("train_critics"):
                 update_info = agent.train_step(batch, critic_only=True)
 
-        with timer.context("train"):
+        with timer.context("sample_replay_buffer"):
             replay_batch = next(replay_iterator)
             demo_batch = next(demo_iterator)
             batch = concat_batches(replay_batch, demo_batch, axis=0)
             batch = dict_data_to_torch(batch, train_image_transform)
 
+        with timer.context("train"):
             update_info = agent.train_step(batch, critic_only=False)
 
         # publish the updated network
         if step > 0 and step % (config.steps_per_update) == 0:
-            server.publish_network(agent.get_params())
+            with timer.context("publish_network"):
+                server.publish_network(agent.get_params())
 
         if tb_logger:
             tb_logger.log(update_info, step=step)
