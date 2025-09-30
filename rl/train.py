@@ -112,6 +112,40 @@ def concat_batches(batch1, batch2, axis=0):
             raise ValueError("Unsupported batch data type")
 
 
+def prefetch_batch_async(iterator, device, image_transform, num_prefetch=2):
+    """异步数据预取函数"""
+    import queue
+    import threading
+
+    batch_queue = queue.Queue(maxsize=num_prefetch)
+
+    def worker():
+        try:
+            while True:
+                replay_batch = next(iterator[0])
+                demo_batch = next(iterator[1])
+                batch = concat_batches(replay_batch, demo_batch, axis=0)
+
+                # 在后台线程中转换数据
+                from rl.sac_policy import dict_data_to_torch
+
+                batch = dict_data_to_torch(batch, image_transform, device=device)
+
+                batch_queue.put(batch)
+        except StopIteration:
+            batch_queue.put(None)
+
+    thread = threading.Thread(target=worker)
+    thread.daemon = True
+    thread.start()
+
+    while True:
+        batch = batch_queue.get()
+        if batch is None:
+            break
+        yield batch
+
+
 def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
 
@@ -154,7 +188,9 @@ def select_action_v2(actions, bc_agent, obs, agent):
 ##############################################################################
 
 
-def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=None):
+def actor(
+    config, agent: SACPolicy, data_store, intvn_data_store, env, device, bc_agent=None
+):
     """
     This is the actor loop, which runs when "--actor" is set to True.
     """
@@ -209,7 +245,7 @@ def actor(config, agent: SACPolicy, data_store, intvn_data_store, env, bc_agent=
             if step < config.random_steps:
                 actions = env.action_space.sample()
             else:
-                obs_torch = dict_data_to_torch(obs, eval_image_transform)
+                obs_torch = dict_data_to_torch(obs, eval_image_transform, device=device)
                 actions = agent.sample_actions(obs_torch, argmax=False)
 
                 actions = select_action_v2(actions, bc_agent, obs, agent)
@@ -303,6 +339,7 @@ def learner(
     demo_buffer,
     tb_logger=None,
     start_step: int = 0,
+    device=None,
 ):
     """
     The learner loop, which runs when "--learner" is set to True.
@@ -387,7 +424,7 @@ def learner(
                 replay_batch = next(replay_iterator)
                 demo_batch = next(demo_iterator)
                 batch = concat_batches(replay_batch, demo_batch, axis=0)
-                batch = dict_data_to_torch(batch, train_image_transform)
+                batch = dict_data_to_torch(batch, train_image_transform, device=device)
 
             with timer.context("train_critics"):
                 update_info = agent.train_step(batch, critic_only=True)
@@ -396,7 +433,7 @@ def learner(
             replay_batch = next(replay_iterator)
             demo_batch = next(demo_iterator)
             batch = concat_batches(replay_batch, demo_batch, axis=0)
-            batch = dict_data_to_torch(batch, train_image_transform)
+            batch = dict_data_to_torch(batch, train_image_transform, device=device)
 
         with timer.context("train"):
             update_info = agent.train_step(batch, critic_only=False)
@@ -485,8 +522,7 @@ def main(config: Config):
     os.makedirs(config.checkpoint_path, exist_ok=True)
     print_green(f"Experiment outputs will be saved to: {config.checkpoint_path}")
 
-    device = torch.device("cuda:1")
-    print(f"Using device: {device}")
+    torch.backends.cudnn.benchmark = True  # 提升卷积性能
 
     # env = get_fake_environment()
     env = get_environment()
@@ -495,6 +531,7 @@ def main(config: Config):
     # 初始化SAC agent
     sac_config = SACConfig()
     agent = SACPolicy(sac_config)
+
     include_grasp_penalty = True
 
     bc_agent = None
@@ -550,6 +587,10 @@ def main(config: Config):
         print_green(f"demo buffer size: {len(demo_buffer)}")
         print_green(f"online buffer size: {len(replay_buffer)}")
 
+        device = torch.device("cuda:1")
+        agent.to(device)
+        print_green(f"Moved SAC agent to {device}")
+
         # learner loop
         learner(
             config,
@@ -558,15 +599,20 @@ def main(config: Config):
             demo_buffer=demo_buffer,
             tb_logger=tb_logger,
             start_step=resume_step,
+            device=device,
         )
 
     elif config.actor:
         data_store = QueuedDataStore(50000)
         intvn_data_store = QueuedDataStore(50000)  # demo_buffer
 
+        device = torch.device("cuda:0")
+        agent.to(device)
+        print_green(f"Moved SAC agent to {device}")
+
         # actor loop
         print_green("starting actor loop")
-        actor(config, agent, data_store, intvn_data_store, env, bc_agent)
+        actor(config, agent, data_store, intvn_data_store, env, device, bc_agent)
 
 
 if __name__ == "__main__":
@@ -589,5 +635,9 @@ python rl/train.py --learner --freeze_actor --resume_actor outputs/bc2rl_2025092
 
 
 """
+
+train: 24
+train_critics: 16
+sample_replay_buffer: 18
 
 """

@@ -13,6 +13,7 @@ import tyro
 sys.path.append(os.getcwd())
 from rl.net import Actor, Critic, DiscreteQCritic
 from rl.replay_buffer_data_store import ReplayBufferDataStore
+import torchvision.transforms.v2 as v2
 from utils.tools import get_device
 
 
@@ -668,40 +669,61 @@ class SACPolicy:
 
         return metadata
 
+    def to(self, device):
+        """将所有模型和参数移到指定设备"""
+        self.device = device
+        self.actor.to(device)
+        self.critic_ensemble.to(device)
+        self.critic_target.to(device)
+
+        if self.config.num_discrete_actions is not None:
+            self.discrete_critic.to(device)
+            self.discrete_critic_target.to(device)
+
+        self.log_alpha.data = self.log_alpha.data.to(device)
+        self.discount = self.discount.to(device)
+
+        return self
+
 
 def get_train_transform():
-    """need CxHxW input"""
-    return transforms.Compose(
+    """need HWC np or tensor, GPU compatible"""
+    return v2.Compose(
         [
             # pre-process
-            transforms.Lambda(lambda img: img.squeeze()),
-            transforms.ToTensor(),
+            v2.Lambda(lambda img: img.squeeze()),
+            v2.Lambda(lambda img: torch.as_tensor(img, dtype=torch.float32) / 255.0),
+            v2.Lambda(lambda img: img.permute(2, 0, 1) if img.ndim == 3 else img),
             # data augmentations
-            transforms.ColorJitter(
-                brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1
-            ),
-            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),  # 随机平移
+            v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+            v2.RandomAffine(degrees=0, translate=(0.1, 0.1)),  # 随机平移
             # post-process
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
 
 
 def get_eval_transform():
-    return transforms.Compose(
+    """need HWC np or tensor, GPU compatible"""
+    return v2.Compose(
         [
             # pre-process
-            transforms.Lambda(lambda img: img.squeeze()),
-            transforms.ToTensor(),
+            v2.Lambda(lambda img: img.squeeze()),
+            v2.Lambda(lambda img: torch.as_tensor(img, dtype=torch.float32) / 255.0),
+            v2.Lambda(lambda img: img.permute(2, 0, 1) if img.ndim == 3 else img),
             # post-process
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
 
 
-def dict_data_to_torch(obj, image_transform=None):
+def dict_data_to_torch(obj, image_transform, device=None):
     if isinstance(obj, np.ndarray):
-        return torch.from_numpy(obj).float()
+        tensor = torch.from_numpy(obj)
+        if device is not None:
+            tensor = tensor.to(device)
+        return tensor
+
     elif isinstance(obj, dict):
         d = {}
         for k, v in obj.items():
@@ -712,19 +734,32 @@ def dict_data_to_torch(obj, image_transform=None):
                 assert v.shape[-1] == 3, f"Expected C=3, got {v.shape}"
                 images = []
                 for image in v:
+                    image = torch.from_numpy(image)
+                    if device is not None:
+                        image = image.to(device)
                     images.append(image_transform(image).unsqueeze(0))
                 v = torch.cat(images, dim=0)
 
             elif k in ["state"]:
                 if len(v.shape) == 3:
+                    assert v.shape[1] == 1, f"Unexpected state shape: {v.shape}"
                     v = v[:, 0, :]  # Remove extra dimension if present
+                v = torch.from_numpy(v)
+                if device is not None:
+                    v = v.to(device)
+            else:
+                v = dict_data_to_torch(
+                    v, image_transform=image_transform, device=device
+                )
 
-            d[k] = dict_data_to_torch(v, image_transform=image_transform)
-
+            d[k] = v
         return d
 
     elif isinstance(obj, (list, tuple)):
-        t = [dict_data_to_torch(x, image_transform=image_transform) for x in obj]
+        t = [
+            dict_data_to_torch(x, image_transform=image_transform, device=device)
+            for x in obj
+        ]
         return tuple(t) if isinstance(obj, tuple) else t
     else:
         return obj

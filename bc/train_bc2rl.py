@@ -132,6 +132,7 @@ def load_and_split_data(args):
         "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
         "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-15/*.pkl",
     ]
+    # data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
 
     total_added = 0
 
