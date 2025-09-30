@@ -799,6 +799,7 @@ def test_learner(config: SACConfig):
 
     print("Creating SAC agent...")
     agent = SACPolicy(config)
+    agent.prepare(torch.device("cpu"))
 
     print("Running training step...")
     update_info = agent.train_step(demo_batch)

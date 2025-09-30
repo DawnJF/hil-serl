@@ -11,36 +11,46 @@ from torch.distributions import (
 import torchvision.models as models
 import torch
 from torch import nn
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
 
 class ImageEncoder(nn.Module):
+    """Smart pretrained encoder with efficient parameter usage"""
 
-    def __init__(self, bottleneck_dim=256):
+    def __init__(self, bottleneck_dim=256, freeze_backbone=True):
         super().__init__()
-        # ResNet18 backbone
-        self.backbone = models.resnet18(pretrained=True)
-        self.backbone = nn.Sequential(
-            *list(self.backbone.children())[:-2]
-        )  # 去掉最后的FC层和平均池化层
+        # Use EfficientNet-B0 as backbone (much lighter than ResNet18 but better performance)
 
-        # 全局平均池化
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
+        backbone_out_dim = 1280  # EfficientNet-B0 output
 
-        self.mlp = nn.Sequential(
-            nn.Linear(512, bottleneck_dim),
+        # Remove final classifier
+        if hasattr(self.backbone, "classifier"):
+            self.backbone.classifier = nn.Identity()
+        elif hasattr(self.backbone, "fc"):
+            self.backbone.fc = nn.Identity()
+
+        # Freeze backbone parameters if requested (similar to JAX frozen encoder)
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+            print(
+                f"Froze {sum(p.numel() for p in self.backbone.parameters())} backbone parameters"
+            )
+
+        # Efficient feature projection with residual connection
+        self.feature_proj = nn.Sequential(
+            nn.Linear(backbone_out_dim, 512),
             nn.ReLU(),
             nn.Dropout(0.1),
-            nn.Linear(bottleneck_dim, bottleneck_dim),
-            nn.ReLU(),
+            nn.Linear(512, bottleneck_dim),
         )
 
     def forward(self, x):
         # 输入: (B, C, H, W)
-        x = self.backbone(x)  # (B, 512, H/32, W/32)
-        x = self.global_pool(x)  # (B, 512, 1, 1)
-        x = x.view(x.size(0), -1)  # (B, 512)
-        x = self.mlp(x)  # (B, bottleneck_dim)
-        return x
+        backbone_features = self.backbone(x)
+        projected = self.feature_proj(backbone_features)
+        return projected
 
 
 class ProprioEncoder(nn.Module):
@@ -49,10 +59,8 @@ class ProprioEncoder(nn.Module):
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
             nn.Linear(hidden_dim, output_dim),
-            nn.LayerNorm(output_dim),
-            nn.Tanh(),
+            nn.ReLU(),
         )
 
     def forward(self, state):
@@ -64,7 +72,8 @@ class EncoderWrapper(nn.Module):
         super().__init__()
         self.image_num = image_num
         self.proprio_dim = proprio_dim
-        self.image_encoder = ImageEncoder(bottleneck_dim=512)
+
+        self.image_encoder = ImageEncoder(bottleneck_dim=256)
         self.proprio_encoder = ProprioEncoder(
             input_dim=proprio_dim, hidden_dim=64, output_dim=64
         )
@@ -80,11 +89,10 @@ class EncoderWrapper(nn.Module):
 
         image_features = []
 
-        # Iterate over the N images for each batch in images
+        # Extract features from all images
         for i in range(N):
-            # Extract each image corresponding to the i-th image in the sequence
             img = images[:, i, :, :, :]  # Shape: (B, C, H, W)
-            img_features = self.image_encoder(img)  # Pass through the image encoder
+            img_features = self.image_encoder(img)  # (B, 256)
             image_features.append(img_features)
 
         image_features = torch.cat(image_features, dim=1)  # Shape: (B, N * image_dim)
@@ -157,7 +165,6 @@ class Actor(nn.Module):
         observations: dict[str, torch.Tensor],
     ) -> TanhMultivariateNormalDiag:
         # 提取观测信息
-
         obs_enc = self.encoder(observations)
 
         # Get network outputs
@@ -174,13 +181,6 @@ class Actor(nn.Module):
         # Build transformed distribution
         dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
 
-        # # Sample actions (reparameterized)
-        # actions = dist.rsample()
-
-        # # Compute log_probs
-        # log_probs = dist.log_prob(actions)
-
-        # return actions, log_probs, means
         return dist
 
     def freeze_bc_params(self):
@@ -201,7 +201,6 @@ class CriticHead(nn.Module):
         super().__init__()
         self.network = nn.Sequential(
             nn.Linear(input_dim, 256),
-            nn.LayerNorm(256),
             nn.ReLU(),
             nn.Dropout(p=0.1),
             nn.Linear(256, 256),
@@ -248,14 +247,21 @@ class DiscreteQCritic(nn.Module):
         self.encoder = EncoderWrapper(image_num=2, proprio_dim=7)
         self.num_discrete_actions = num_discrete_actions
 
-        self.network = nn.Sequential(
-            nn.Linear(self.encoder.get_out_shape(), 256),
-            nn.LayerNorm(256),
+        # 使用简化的Dueling网络架构
+        encoder_dim = self.encoder.get_out_shape()
+
+        # 状态值流
+        self.value_stream = nn.Sequential(
+            nn.Linear(encoder_dim, 128),
             nn.ReLU(),
-            nn.Dropout(p=0.1),
-            nn.Linear(256, 256),
+            nn.Linear(128, 1),
+        )
+
+        # 动作优势流
+        self.advantage_stream = nn.Sequential(
+            nn.Linear(encoder_dim, 128),
             nn.ReLU(),
-            nn.Linear(256, num_discrete_actions),
+            nn.Linear(128, num_discrete_actions),
         )
 
     def forward(
@@ -263,8 +269,14 @@ class DiscreteQCritic(nn.Module):
         observations: dict[str, torch.Tensor],
     ) -> torch.Tensor:
         # 提取观测信息
-
         obs_enc = self.encoder(observations)
 
-        q_values = self.network(obs_enc)
+        # Dueling架构: Q(s,a) = V(s) + A(s,a) - mean(A(s,a))
+        value = self.value_stream(obs_enc)  # (B, 1)
+        advantage = self.advantage_stream(obs_enc)  # (B, num_actions)
+
+        # 减去平均优势以保证唯一性
+        advantage_mean = advantage.mean(dim=-1, keepdim=True)
+        q_values = value + advantage - advantage_mean
+
         return q_values
