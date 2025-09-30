@@ -27,7 +27,7 @@ from rl.sac_policy import (
     get_train_transform,
     get_eval_transform,
 )
-from utils.tools import get_device, print_dict_structure
+from utils.tools import get_device, print_dict_structure, print_dict_device
 
 
 @dataclass
@@ -53,7 +53,7 @@ class Config:
     replay_buffer_capacity: int = 200000
     cta_ratio: int = 2  # critic to actor update ratio
     steps_per_update: int = 50  # steps between network updates
-    checkpoint_period: int = 4000
+    checkpoint_period: int = 400
     buffer_period: int = 2000  # steps between buffer saves
     image_keys: List[str] = field(default_factory=lambda: ["rgb", "wrist"])
 
@@ -337,9 +337,9 @@ def learner(
     agent: SACPolicy,
     replay_buffer,
     demo_buffer,
-    tb_logger=None,
+    tb_logger,
+    device,
     start_step: int = 0,
-    device=None,
 ):
     """
     The learner loop, which runs when "--learner" is set to True.
@@ -449,9 +449,10 @@ def learner(
 
         if step > 0 and step % config.checkpoint_period == 0:
             # 保存checkpoint
-            checkpoint_dir = os.path.join(config.checkpoint_path, "checkpoints")
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            checkpoint_file = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
+
+            checkpoint_file = os.path.join(
+                config.checkpoint_path, f"checkpoint_{step}.pt"
+            )
 
             # 保存完整的训练状态
             additional_info = {
@@ -482,11 +483,12 @@ def load_demo_data(config, demo_buffer):
                 demo_buffer.insert(transition)
 
 
-def resume_buffer_from_checkpoint(config, replay_buffer, demo_buffer):
-    if config.checkpoint_path is not None and os.path.exists(
-        os.path.join(config.checkpoint_path, "buffer")
-    ):
-        for file in glob.glob(os.path.join(config.checkpoint_path, "buffer/*.pkl")):
+def resume_buffer_from_checkpoint(config: Config, replay_buffer, demo_buffer):
+    if config.resume_checkpoint is None:
+        return
+    folder = os.path.dirname(config.resume_checkpoint)
+    if os.path.exists(os.path.join(folder, "buffer")):
+        for file in glob.glob(os.path.join(folder, "buffer/*.pkl")):
             with open(file, "rb") as f:
                 transitions = pkl.load(f)
                 for transition in transitions:
@@ -495,12 +497,8 @@ def resume_buffer_from_checkpoint(config, replay_buffer, demo_buffer):
             f"Loaded previous buffer data. Replay buffer size: {len(replay_buffer)}"
         )
 
-    if config.checkpoint_path is not None and os.path.exists(
-        os.path.join(config.checkpoint_path, "demo_buffer")
-    ):
-        for file in glob.glob(
-            os.path.join(config.checkpoint_path, "demo_buffer/*.pkl")
-        ):
+    if os.path.exists(os.path.join(folder, "demo_buffer")):
+        for file in glob.glob(os.path.join(folder, "demo_buffer/*.pkl")):
             with open(file, "rb") as f:
                 transitions = pkl.load(f)
                 for transition in transitions:
@@ -539,29 +537,20 @@ def main(config: Config):
 
     # 检查是否需要从checkpoint恢复训练
     resume_step = 0
-    if config.resume_checkpoint and os.path.exists(config.resume_checkpoint):
-        print_green(f"Loading checkpoint from: {config.resume_checkpoint}")
-        try:
-            checkpoint_metadata = agent.load_checkpoint(config.resume_checkpoint)
-            resume_step = checkpoint_metadata.get("step", 0)
-            print_green(f"Resumed training from step: {resume_step}")
-
-            # 如果checkpoint中有额外的配置信息，可以在这里使用
-            additional_info = checkpoint_metadata.get("additional_info", {})
-            if "timer_stats" in additional_info:
-                print_green(
-                    f"Previous training timer stats: {additional_info['timer_stats']}"
-                )
-
-        except Exception as e:
-            print(f"Failed to load checkpoint: {e}")
-            print_green("Starting training from scratch")
-            resume_step = 0
-    elif config.resume_checkpoint:
-        print(f"Checkpoint file not found: {config.resume_checkpoint}")
-        print_green("Starting training from scratch")
 
     if config.learner:
+        device = torch.device("cuda:1")
+        agent.prepare(device)
+        print_green(f"Moved SAC agent to {device}")
+
+        if config.resume_checkpoint:
+            checkpoint_metadata = agent.load_checkpoint(config.resume_checkpoint)
+
+            resume_step = checkpoint_metadata.get("step", 0)
+            print_green(
+                f"Resumed training from step: {resume_step} : {config.resume_checkpoint}"
+            )
+
         # set up tensorboard logging
         tb_logger = make_tensorboard_logger(
             log_dir=config.checkpoint_path,
@@ -587,10 +576,6 @@ def main(config: Config):
         print_green(f"demo buffer size: {len(demo_buffer)}")
         print_green(f"online buffer size: {len(replay_buffer)}")
 
-        device = torch.device("cuda:1")
-        agent.to(device)
-        print_green(f"Moved SAC agent to {device}")
-
         # learner loop
         learner(
             config,
@@ -598,8 +583,8 @@ def main(config: Config):
             replay_buffer,
             demo_buffer=demo_buffer,
             tb_logger=tb_logger,
-            start_step=resume_step,
             device=device,
+            start_step=resume_step,
         )
 
     elif config.actor:
@@ -607,7 +592,7 @@ def main(config: Config):
         intvn_data_store = QueuedDataStore(50000)  # demo_buffer
 
         device = torch.device("cuda:0")
-        agent.to(device)
+        agent.prepare(device)
         print_green(f"Moved SAC agent to {device}")
 
         # actor loop
@@ -622,12 +607,12 @@ if __name__ == "__main__":
 
 """
 # 从头开始训练
-python rl/train.py --learner --debug --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --max_steps 100
+python rl/train.py --learner --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --max_steps 100
 
 python rl/train.py --actor --debug --max_steps 100
 
 # 从checkpoint恢复训练
-python rl/train.py --learner --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --resume_checkpoint "outputs/torch_rlpd/debug/checkpoints/checkpoint_4000.pt" --debug --max_steps 200
+python rl/train.py --learner --resume_checkpoint "outputs/torch_rlpd/debug/20250930-1441/checkpoint_400.pt"
 
 
 python rl/train.py --learner --freeze_actor --resume_actor outputs/bc2rl_20250928_173221/checkpoint-32.pth 
@@ -639,5 +624,6 @@ python rl/train.py --learner --freeze_actor --resume_actor outputs/bc2rl_2025092
 train: 24
 train_critics: 16
 sample_replay_buffer: 18
+
 
 """

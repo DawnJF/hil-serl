@@ -80,23 +80,6 @@ class SACPolicy:
 
         self.discount = torch.tensor(self.config.discount)
 
-        # 初始化优化器
-        self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.config.learning_rate
-        )
-        self.critic_optimizer = torch.optim.Adam(
-            self.critic_ensemble.parameters(), lr=self.config.learning_rate
-        )
-
-        if self.config.num_discrete_actions is not None:
-            self.discrete_critic_optimizer = torch.optim.Adam(
-                self.discrete_critic.parameters(), lr=self.config.learning_rate
-            )
-
-        self.temperature_optimizer = torch.optim.Adam(
-            [self.log_alpha], lr=self.config.learning_rate
-        )
-
     def eval(self):
         self.actor.eval()
         self.critic_ensemble.eval()
@@ -472,7 +455,7 @@ class SACPolicy:
         # Update critics
         critic_loss, info = self.update_critic(batch)
         metrics_loss["critic_loss"] = critic_loss.item()
-        metrics.update(info)
+        metrics["critic"] = info
 
         # Update discrete critic if exists
         if self.config.num_discrete_actions is not None and not self.bc_actor_freezed:
@@ -485,7 +468,7 @@ class SACPolicy:
                 # Update actor
                 actor_loss, info = self.update_actor(batch)
                 metrics_loss["actor_loss"] = actor_loss.item()
-                metrics.update(info)
+                metrics["actor"] = info
 
             # Update temperature if using automatic entropy tuning
 
@@ -669,7 +652,7 @@ class SACPolicy:
 
         return metadata
 
-    def to(self, device):
+    def prepare(self, device):
         """将所有模型和参数移到指定设备"""
         self.device = device
         self.actor.to(device)
@@ -683,7 +666,22 @@ class SACPolicy:
         self.log_alpha.data = self.log_alpha.data.to(device)
         self.discount = self.discount.to(device)
 
-        return self
+        # 初始化优化器
+        self.actor_optimizer = torch.optim.Adam(
+            self.actor.parameters(), lr=self.config.learning_rate
+        )
+        self.critic_optimizer = torch.optim.Adam(
+            self.critic_ensemble.parameters(), lr=self.config.learning_rate
+        )
+
+        if self.config.num_discrete_actions is not None:
+            self.discrete_critic_optimizer = torch.optim.Adam(
+                self.discrete_critic.parameters(), lr=self.config.learning_rate
+            )
+
+        self.temperature_optimizer = torch.optim.Adam(
+            [self.log_alpha], lr=self.config.learning_rate
+        )
 
 
 def get_train_transform():

@@ -4,6 +4,22 @@ import sys
 import torch
 
 
+def print_dict_device(d, indent=0):
+    """递归打印字典结构"""
+    for key, value in d.items():
+        prefix = "      " * indent
+        if isinstance(value, dict):
+            print(f"{prefix}{key}:")
+            print_dict_device(value, indent + 1)
+        else:
+            if value is None:
+                print(f"{prefix}{key}: None")
+            elif hasattr(value, "device"):
+                print(f"{prefix}{key}: {value.device}")
+            else:
+                print(f"{prefix}{key}: {value}")
+
+
 def print_dict_structure(d, indent=0):
     """递归打印字典结构"""
     for key, value in d.items():
