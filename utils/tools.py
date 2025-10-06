@@ -4,6 +4,16 @@ import sys
 import torch
 
 
+def logging_args(args):
+    # 格式化打印参数，提高可读性
+    logging.info("=" * 50)
+    logging.info("Configuration:")
+    logging.info("=" * 50)
+    for key, value in vars(args).items():
+        logging.info(f"  {key:20}: {value}")
+    logging.info("=" * 50)
+
+
 def print_dict_device(d, indent=0):
     """递归打印字典结构"""
     for key, value in d.items():

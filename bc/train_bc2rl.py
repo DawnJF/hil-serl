@@ -15,7 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 sys.path.append(os.getcwd())
 from reward_model.pkl_utils import load_pkl
-from utils.tools import get_device, setup_logging
+from utils.tools import get_device, logging_args, setup_logging
 from rl.net import Actor, DiscreteQCritic
 from rl.sac_policy import get_eval_transform, get_train_transform, dict_data_to_torch
 
@@ -32,12 +32,13 @@ class Args:
     state_dim: int = 7
 
     batch_size: int = 128
+    epochs: int = 60
+    save_interval: int = 4
 
-    log_interval: int = 10  # 每多少个batch记录一次详细指标
-    print_action_interval: int = 500
     discrete_weight: list = field(
         default_factory=lambda: [4.0, 1.0, 4.0]
     )  # gripper open/keep/close 权重
+    log_likelihood: bool = True
 
 
 class RLActor(nn.Module):
@@ -49,11 +50,10 @@ class RLActor(nn.Module):
     def forward(self, batch):
         # batch should be a dict with observations format
         dist = self.c_actor(batch)
-        actions = dist.mode()
 
         discrete_actions = self.d_actor(batch)
 
-        return actions, discrete_actions
+        return dist, discrete_actions
 
     def save_checkpoint(self, path):
         torch.save(
@@ -132,7 +132,7 @@ def load_and_split_data(args):
         "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
         "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-15/*.pkl",
     ]
-    # data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
+    data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
 
     total_added = 0
 
@@ -186,14 +186,15 @@ def load_and_split_data(args):
     return train_dataloader, test_dataloader
 
 
-def train(args: Args, epochs=100):
+def train(args: Args):
     device = get_device()
 
-    args.output_dir = f"{args.output_dir}_" + time.strftime("%Y%m%d_%H%M%S")
+    args.output_dir = os.path.join(args.output_dir, time.strftime("%Y%m%d_%H%M%S"))
 
     os.makedirs(args.output_dir, exist_ok=True)
     setup_logging(args.output_dir)
-    logging.info(f"Args: {vars(args)}")
+
+    logging_args(args)
 
     tensorboard_dir = os.path.join(args.output_dir, "tensorboard")
     writer = SummaryWriter(tensorboard_dir)
@@ -207,8 +208,31 @@ def train(args: Args, epochs=100):
     weights = torch.tensor(list(args.discrete_weight), dtype=torch.float32).to(device)
     discrete_criterion = nn.CrossEntropyLoss(weight=weights)
 
+    def compute_loss(observations, continue_label, discrete_label):
+        dist, pred_discrete = model(observations)  # 传入observations字典
+        if args.log_likelihood:
+            # 将连续动作剪切到[-1,1]范围内，确保与TanhMultivariateNormalDiag分布兼容
+            continue_label_clipped = torch.clamp(
+                continue_label, -1.0 + 1e-6, 1.0 - 1e-6
+            )
+
+            # 计算log_prob并使用mean而不是sum，避免梯度爆炸
+            log_probs = dist.log_prob(continue_label_clipped)
+
+            # 添加数值稳定性检查
+            log_probs = torch.clamp(log_probs, min=-50.0, max=0.0)
+
+            continue_loss = -log_probs.mean()  # 使用mean而不是sum/batch_size
+        else:
+            pred_continue = dist.mode()
+            continue_loss = criterion(pred_continue, continue_label)
+        discrete_loss = discrete_criterion(pred_discrete, discrete_label)  # gripper
+
+        loss = continue_loss + discrete_loss
+        return loss, continue_loss, discrete_loss
+
     global_step = 0
-    for epoch in range(epochs):
+    for epoch in range(args.epochs):
         # 训练阶段
         model.train()
         total_loss = 0.0
@@ -223,14 +247,16 @@ def train(args: Args, epochs=100):
             continue_label = continue_label.to(device).squeeze()
             discrete_label = discrete_label.to(device).squeeze()
 
-            pred_continue, pred_discrete = model(observations)  # 传入observations字典
-            continue_loss = criterion(pred_continue, continue_label)
-            discrete_loss = discrete_criterion(pred_discrete, discrete_label)  # gripper
-
-            loss = continue_loss + discrete_loss
+            loss, continue_loss, discrete_loss = compute_loss(
+                observations, continue_label, discrete_label
+            )
 
             optimizer.zero_grad()
             loss.backward()
+
+            # 添加梯度剪切防止梯度爆炸
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             optimizer.step()
 
             total_loss += loss.item()
@@ -249,6 +275,8 @@ def train(args: Args, epochs=100):
         model.eval()
 
         val_loss = 0.0
+        val_loss_continue = 0.0
+        val_loss_discrete = 0.0
 
         with torch.no_grad():
             for observations, continue_label, discrete_label in test_dataloader:
@@ -260,25 +288,31 @@ def train(args: Args, epochs=100):
                 continue_label = continue_label.to(device).squeeze()
                 discrete_label = discrete_label.to(device).squeeze()
 
-                pred_continue, pred_discrete = model(observations)
-                continue_loss = criterion(pred_continue, continue_label)
-                discrete_loss = discrete_criterion(pred_discrete, discrete_label)
-                loss = continue_loss + discrete_loss
+                loss, continue_loss, discrete_loss = compute_loss(
+                    observations, continue_label, discrete_label
+                )
                 val_loss += loss.item()
+                val_loss_continue += continue_loss.item()
+                val_loss_discrete += discrete_loss.item()
 
         val_loss /= len(test_dataloader)
 
         writer.add_scalar("Loss/Epoch", avg_loss, epoch)
         writer.add_scalar("Loss/Val_Epoch", val_loss, epoch)
+        writer.add_scalar("Loss/Val_Continue_Epoch", val_loss_continue, epoch)
+        writer.add_scalar("Loss/Val_Discrete_Epoch", val_loss_discrete, epoch)
 
-        logging.info(f"Epoch {epoch+1}/{epochs}:")
+        logging.info(f"Epoch {epoch+1}/{args.epochs}:")
         logging.info(f"  Train Loss: {avg_loss:.4f}")
         logging.info(f"  Val Loss: {val_loss:.4f}")
+        logging.info(f"  Val Continue Loss: {val_loss_continue:.4f}")
+        logging.info(f"  Val Discrete Loss: {val_loss_discrete:.4f}")
         logging.info("-" * 40)
 
-        cp_name = f"{args.output_dir}/checkpoint-{epoch+1}.pth"
-        model.save_checkpoint(cp_name)
-        logging.info(f"Checkpoint saved to {cp_name}")
+        if (epoch + 1) % args.save_interval == 0 or (epoch + 1) == args.epochs:
+            cp_name = f"{args.output_dir}/checkpoint-{epoch+1}.pth"
+            model.save_checkpoint(cp_name)
+            logging.info(f"Checkpoint saved to {cp_name}")
 
     writer.close()
     logging.info("Tensorboard logging completed.")
