@@ -132,7 +132,7 @@ def load_and_split_data(args):
         "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
         "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-15/*.pkl",
     ]
-    data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
+    # data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
 
     total_added = 0
 
@@ -296,6 +296,8 @@ def train(args: Args):
                 val_loss_discrete += discrete_loss.item()
 
         val_loss /= len(test_dataloader)
+        val_loss_continue /= len(test_dataloader)
+        val_loss_discrete /= len(test_dataloader)
 
         writer.add_scalar("Loss/Epoch", avg_loss, epoch)
         writer.add_scalar("Loss/Val_Epoch", val_loss, epoch)
