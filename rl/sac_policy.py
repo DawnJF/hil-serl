@@ -765,7 +765,7 @@ def dict_data_to_torch(obj, image_transform, device=None):
 
 def test_learner(config: SACConfig):
     # device = torch.device("cpu")
-    device = torch.device("cuda:0")
+    device = torch.device("cuda:1")
     config.demo_path = [
         "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl"
     ]
@@ -815,7 +815,7 @@ def test_learner(config: SACConfig):
 
         with timer.context("to_torch"):
 
-            demo_batch = dict_data_to_torch(demo_batch, get_eval_transform(), device)
+            demo_batch = dict_data_to_torch(demo_batch, get_train_transform(), device)
 
         with timer.context("train_step"):
             print("Running training step...")
