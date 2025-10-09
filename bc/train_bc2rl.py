@@ -228,7 +228,7 @@ def train(args: Args):
             # 添加数值稳定性检查
             log_probs = torch.clamp(log_probs, min=-50.0, max=0.0)
 
-            continue_loss = -log_probs.mean()  # 使用mean而不是sum/batch_size
+            continue_loss = -log_probs.mean()
         else:
             pred_continue = dist.mode()
             continue_loss = criterion(pred_continue, continue_label)
@@ -334,7 +334,7 @@ class ActorWrapper:
         self.model.eval()
         self.image_transform = get_eval_transform()
 
-    def predict(self, obs):
+    def predict(self, obs, argmax=True):
         # 构造observations字典，匹配训练时的格式
         observations = {
             "state": obs["state"],
@@ -349,9 +349,16 @@ class ActorWrapper:
             observations[key] = observations[key].to(self.device)
 
         with torch.no_grad():
-            action, gripper = self.model(observations)
+            action_dist, gripper = self.model(observations)
 
-        np_action = action.cpu().numpy().squeeze()
+        # action_mean = action_dist.mean
+        action_std = action_dist.stddev
+        print(f"Action std: {action_std}")
+        if argmax:
+            np_action = action_dist.mode().cpu().numpy().squeeze()
+        else:
+            np_action = action_dist.sample().cpu().numpy().squeeze()
+
         np_gripper = gripper.cpu().numpy().squeeze()
 
         gripper_action = np.argmax(np_gripper) - 1  # 0, 1, 2 -> -1, 0, 1

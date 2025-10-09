@@ -1,6 +1,5 @@
 import os
 import time
-import jax
 import sys
 
 sys.path.append(os.getcwd())
@@ -16,9 +15,6 @@ from rl.envs_temp import (
 from serl_robot_infra.franka_env.envs.wrappers import SpacemouseIntervention
 from utils.tools import print_dict_structure
 from bc.train_bc2rl import ActorWrapper
-
-if not hasattr(jax, "tree_map"):
-    jax.tree_map = jax.tree.map
 
 
 def test_Env():
