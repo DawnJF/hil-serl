@@ -764,6 +764,16 @@ def dict_data_to_torch(obj, image_transform, device=None):
 
 
 def test_learner(config: SACConfig):
+    # device = torch.device("cpu")
+    device = torch.device("cuda:0")
+    config.demo_path = [
+        "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl"
+    ]
+    batch_size = 256
+
+    from serl_launcher.serl_launcher.utils.timer_utils import Timer
+
+    timer = Timer()
 
     observation_space = gym.spaces.Dict(
         {
@@ -792,34 +802,32 @@ def test_learner(config: SACConfig):
                 demo_buffer.insert(transition)
     print(f"demo buffer size: {len(demo_buffer)}")
 
-    demo_iterator = demo_buffer.get_iterator(sample_args={"batch_size": 4})
-    demo_batch = next(demo_iterator)
+    demo_iterator = demo_buffer.get_iterator(sample_args={"batch_size": batch_size})
 
-    demo_batch = dict_data_to_torch(demo_batch, image_transform=get_train_transform())
-
-    print("Creating SAC agent...")
     agent = SACPolicy(config)
-    agent.prepare(torch.device("cpu"))
+    agent.prepare(device)
+    print("Model and optimizers initialized.")
 
-    print("Running training step...")
-    update_info = agent.train_step(demo_batch)
-    print("Training step completed!")
-    print(f"Update info: {update_info}")
+    for i in range(20):
 
-    return agent, update_info
+        with timer.context("prepare_data"):
+            demo_batch = next(demo_iterator)
+
+        with timer.context("to_torch"):
+
+            demo_batch = dict_data_to_torch(demo_batch, get_eval_transform(), device)
+
+        with timer.context("train_step"):
+            print("Running training step...")
+            update_info = agent.train_step(demo_batch)
+            # print(f"Update info: {update_info}")
+
+        if (i + 1) % 4 == 0:
+            print(f"Average times: {timer.get_average_times()}")
 
 
 if __name__ == "__main__":
     # 测试配置
     config = tyro.cli(SACConfig)
 
-    print("Starting test_learner...")
-    try:
-        agent, update_info = test_learner(config)
-        print("Test completed successfully!")
-        print(f"Final update info: {update_info}")
-    except Exception as e:
-        print(f"Error during testing: {e}")
-        import traceback
-
-        traceback.print_exc()
+    test_learner(config)
