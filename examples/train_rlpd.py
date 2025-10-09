@@ -68,40 +68,18 @@ def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
 
 
-def select_action(actions, bc_agent, obs, client):
-    if bc_agent is None:
-        return actions
+# def select_action(actions, bc_agent, obs, client):
+#     if bc_agent is None:
+#         return actions
 
-    xyz = actions[:3]
-    bc_actions = bc_agent(obs["state"])
-    bc_xyz = bc_actions[:3]
-    result = client.request(
-        "request-q", {"actions": xyz, "bc_actions": bc_xyz, "obs": obs}
-    )
-    if result["select_bc"]:
-        return bc_actions
-    else:
-        return actions
-
-
-def select_action_v2(actions, bc_agent, obs, agent):
-    if bc_agent is None:
-        return actions
-
-    xyz = actions[:3]
-    bc_actions = bc_agent(obs)
-    bc_actions = bc_actions[0]
-    bc_actions = jnp.append(bc_actions, actions[3])
-
-    bc_xyz = bc_actions[:3]
-
-    q = agent.forward_critic_eval(obs, xyz)
-    bc_q = agent.forward_critic_eval(obs, bc_xyz)
-
-    if bc_q.min(axis=0) > q.min(axis=0):
-        return bc_actions
-    else:
-        return actions
+#     bc_actions = bc_agent(obs["state"])
+#     result = client.request(
+#         "request-q", {"actions": actions, "bc_actions": bc_actions, "obs": obs}
+#     )
+#     if result["select_bc"]:
+#         return bc_actions
+#     else:
+#         return actions
 
 
 ##############################################################################
@@ -113,7 +91,7 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
     """
     start_step = (
         int(os.path.basename(natsorted(glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")))[-1])[12:-4]) + 1
-        if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path)
+        if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path) and os.path.exists(os.path.join(FLAGS.checkpoint_path, "buffer"))
         else 0
     )
 
@@ -166,7 +144,6 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
                     argmax=False,
                 )
                 # actions = select_action(actions, bc_agent, obs, client)
-                actions = select_action_v2(actions, bc_agent, obs, agent)
                 actions = np.asarray(jax.device_get(actions))
 
         # Step environment
@@ -261,24 +238,9 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     def stats_callback(type: str, payload: dict) -> dict:
         """Callback for when server receives stats request."""
 
-        if type == "send-stats":
-            if wandb_logger is not None:
-                wandb_logger.log(payload, step=step)
-        elif type == "request-q":
-            actions = payload["actions"]
-            bc_actions = payload["bc_actions"]
-            obs = payload["obs"]
-            q = agent.forward_critic_eval(obs, actions)
-            bc_q = agent.forward_critic_eval(obs, bc_actions)
-
-            return {"select_bc": bc_q.min(axis=0) > q.min(axis=0)}
-
-            # combined_actions = jnp.concatenate([actions, bc_actions], axis=0)
-            # combined_results = agent.forward_critic_eval(obs, combined_actions)
-            # best_index = jnp.argmin(combined_results, axis=0)
-            # return {"select_bc": best_index >= actions.shape[0]}
-        else:
-            raise ValueError(f"Invalid request type: {type}")
+        assert type == "send-stats", f"Invalid request type: {type}"
+        if wandb_logger is not None:
+            wandb_logger.log(payload, step=step)
 
         return {}  # not expecting a response
 
@@ -426,9 +388,8 @@ def main(_):
             image_keys=config.image_keys,
             encoder_type=config.encoder_type,
             discount=config.discount,
-            max_steps=config.max_steps,
-            if_schedule_lr=True,
-            bc_agent=bc_agent,
+            # max_steps=config.max_steps,
+            # if_schedule_lr=False
         )
         include_grasp_penalty = True
     elif config.setup_mode == "dual-arm-learned-gripper":

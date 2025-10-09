@@ -246,13 +246,13 @@ class UR_Platform_Env(gym.Env):
         self._send_pos_command(self.clip_safety_box(self.nextpos))
 
         self.curr_path_length += 1
-        dt_s = time.perf_counter() - start_time
-        min_step_time = 1 / 30  # 30hz
-        if dt_s < min_step_time:
-            print(
-                f"[UR_Platform_Env] sleep min_step_time: {(min_step_time - dt_s):.4f}s"
-            )
-            time.sleep(min_step_time - dt_s)
+        # dt_s = time.perf_counter() - start_time
+        # min_step_time = 1 / 30  # 30hz
+        # if dt_s < min_step_time:
+        #     print(
+        #         f"[UR_Platform_Env] sleep min_step_time: {(min_step_time - dt_s):.4f}s"
+        #     )
+        #     time.sleep(min_step_time - dt_s)
 
         self._update_currpos()
         ob = self._get_obs()
@@ -377,14 +377,23 @@ class UR_Platform_Env(gym.Env):
         """Internal function to send gripper command to the robot."""
 
         if mode == "binary":
-            time_check = time.time() - self.last_gripper_act > self.gripper_sleep
+            time_check = (time.time() - self.last_gripper_act) > self.gripper_sleep
 
             print(f"[DEBUG] _send_g {pos}({self.currgripper}), {time_check}")
 
             if (pos <= -0.5) and time_check:  # close gripper
                 self.client.post({"type": "close_gripper"})
-            elif (pos >= 0.5) and time_check:  # open gripper
+                self.last_gripper_act = time.time()
+                # time.sleep(self.gripper_sleep)
+            elif (
+                (pos >= 0.5)
+                # and (self.currgripper < 0.85)
+                # and (self.currgripper > 0.25)
+                and ((time.time() - self.last_gripper_act) > self.gripper_sleep)
+            ):  # open gripper
                 self.client.post({"type": "open_gripper"})
+                # self.last_gripper_act = time.time()
+                # time.sleep(self.gripper_sleep)
             else:
                 return
             self.last_gripper_act = time.time()

@@ -17,8 +17,8 @@ from serl_launcher.wrappers.chunking import ChunkingWrapper
 from serl_launcher.networks.reward_classifier import load_classifier_func
 
 sys.path.append(os.getcwd())
-sys.path.append("/home/facelesswei/code/hil-serl")
-sys.path.append("/home/facelesswei/code/hil-serl/examples")
+sys.path.append("/home/facelesswei/code/hil-serl-zbh")
+sys.path.append("/home/facelesswei/code/hil-serl-zbh/examples")
 from utils.tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
@@ -126,15 +126,21 @@ class UREnvConfig(DefaultEnvConfig):
         "rgb": {
             "dim": (1280, 720),
         },
+        "scene": {
+            "dim": (1280, 720)
+        }
     }
     IMAGE_CROP = {
         "wrist": lambda img: img[0:300, 0:640],
-        "rgb": lambda img: img[300:420, 390:640],
+        "rgb": lambda img: img[285:540, 280:640],
+        # "rgb": lambda img: img[300:420, 390:640],
+        "scene": lambda img: img[290:, 50:610] 
     }
     # TARGET_POSE = np.array(
     #     [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
     # )
-    reset_xyz = np.array([-0.35, -0.5, 0.15])
+    # reset_xyz = np.array([-0.35, -0.5, 0.15])
+    reset_xyz = np.array([-0.6215623026557267, -0.34439493670229837, 0.15])
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
     RESET_POSE = np.array([*reset_xyz, *reset_euler])
     ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
@@ -183,25 +189,25 @@ class UREnvConfig(DefaultEnvConfig):
             "type": "RandomAffine",
             "kwargs": {"degrees": 0, "translate": (0.1, 0.1)}
         },
-        "perspective":{
-            "weight": 1.0,
-            "type": "RandomPerspective",
-            "kwargs": {
-                "distortion_scale": 0.2,  # 中等变形强度，不破坏特征
-                "p": 0.5,                 # 50%概率应用，平衡多样性和稳定性
-                "fill": (0, 0, 0)         # 空白区域填黑色（根据你的数据集背景色调整）
-            }
-        }
+        # "perspective":{
+        #     "weight": 1.0,
+        #     "type": "RandomPerspective",
+        #     "kwargs": {
+        #         "distortion_scale": 0.2,  # 中等变形强度，不破坏特征
+        #         "p": 0.5,                 # 50%概率应用，平衡多样性和稳定性
+        #         "fill": (0, 0, 0)         # 空白区域填黑色（根据你的数据集背景色调整）
+        #     }
+        # }
     }
-    MAX_NUM_TRANSFORMS = 7  # maximum number of transforms to apply
+    MAX_NUM_TRANSFORMS = 5  # maximum number of transforms to apply
     ENABLE_TRANSFORMS = True  # whether to enable image transforms
     RANDOM_ORDER = True  # whether to apply transforms in random order
-    CAMERA_SECTIONS = ["wrist", "rgb"]
+    CAMERA_SECTIONS = ["wrist", "rgb", "scene"]
     PROBABILITY = 0.5  # probability to apply image transforms
 
 
 class TrainConfig(DefaultTrainingConfig):
-    image_keys = ["wrist", "rgb"]
+    image_keys = ["wrist", "rgb", "scene"]
     classifier_keys = ["side_classifier"]
     # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
     proprio_keys = ["tcp_pose", "gripper_pose"]
@@ -228,8 +234,8 @@ class TrainConfig(DefaultTrainingConfig):
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
         #     env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
-        env = GripperPenaltyWrapper(env, penalty=-0.02)
-        # env = ImageTransformWrapper(env, config=UREnvConfig())
+        env = GripperPenaltyWrapper(env, penalty=-0.04)
+        env = ImageTransformWrapper(env, config=UREnvConfig())
         return env
 
 
@@ -283,9 +289,15 @@ def test_images():
     print("wrist_shape", wrist_shape)
     print("wrist_type", type(wrist))
 
+    scene = obs["scene"]
+    scene_shape = scene.shape
+    print("scene_shape", scene_shape)
+    print("scene_type", type(scene))
+
     ##------ debug
     Image.fromarray(rgb.squeeze(0)).save("outputs/test_rgb/rgb.png")
     Image.fromarray(wrist.squeeze(0)).save("outputs/test_rgb/wrist.png")
+    Image.fromarray(scene.squeeze(0)).save("outputs/test_rgb/scene.png")
 
 
 def test_reward_model():
@@ -302,6 +314,7 @@ def test_reward_model():
         action = env.action_space.sample()
         action = np.zeros((7,))
         obs, reward, done, truncated, info = env.step(action)
+        print(f"left: {info['left']}, right: {info['right']}")
         print(f"Reward: {reward}")
         print(f"Done: {done}")
         if done:

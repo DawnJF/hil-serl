@@ -143,6 +143,7 @@ class GripperPenaltyWrapper(gym.Wrapper):
             action[-1] > 0.5 and self.last_gripper_pos < 0.9
         ):
             info["grasp_penalty"] = self.penalty
+            print(f"\033[93m Set grasp penalty is {self.penalty}\033[0m")
         else:
             info["grasp_penalty"] = 0.0
 
@@ -160,15 +161,18 @@ class HumanRewardEnv(gym.Wrapper):
         self.success_key = False
         self.failure_key = False
         self.collision_key = False
+        self.gripper_coverage_key = False
 
         def on_press(key):
             try:
                 if str(key) == "Key.space":
                     self._set_success()
-                elif str(key) == "Key.enter":
+                elif str(key) == "Key.ctrl_r":
                     self._set_failure()
-                elif str(key) == "Key.alt_r":
+                elif key.char == ",":
                     self._set_collision()
+                elif key.char == ".":
+                    self._set_gripper_coverage()
             except AttributeError:
                 pass
 
@@ -189,6 +193,11 @@ class HumanRewardEnv(gym.Wrapper):
         # light yellow font
         print("\033[93m Collision Key Pressed\033[0m")
         self.collision_key = True
+    
+    def _set_gripper_coverage(self):
+        # light purple font
+        print("\033[95m Gripper Coverage Key Pressed\033[0m")
+        self.gripper_coverage_key = True
 
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
@@ -198,14 +207,22 @@ class HumanRewardEnv(gym.Wrapper):
             # print("\033[92m Reward: 1.0\033[0m")
             self.success_key = False
             done = True
+            info["succeed"] = reward
         elif self.failure_key:
             reward = -1.0
             self.failure_key = False
             done = True
+            info["succeed"] = reward
         elif self.collision_key:
             reward = -0.2
             self.collision_key = False
             done = False
+            info["succeed"] = reward
+        elif self.gripper_coverage_key:
+            reward = -0.1
+            self.gripper_coverage_key = False
+            done = False
+            info["succeed"] = reward
         else:
             reward = 0.0 if int(reward) == 0 else reward
 
@@ -374,16 +391,12 @@ class ImageTransformWrapper(gym.ObservationWrapper):
         if n_subset == 0 or not self.enable_transforms:
             self.tf = v2.Identity()
         else:
-            if random.random() > self.p:
-                # Add Identity transform helping model to learn the original images
-                self.tf = v2.Identity()
-            else:
-                self.tf = RandomSubsetApply(
-                    transforms=list(self.transforms.values()),
-                    p=self.weights,
-                    n_subset=n_subset,
-                    random_order=self.random_order,
-                )
+            self.tf = RandomSubsetApply(
+                transforms=list(self.transforms.values()),
+                p=self.weights,
+                n_subset=n_subset,
+                random_order=self.random_order,
+            )
 
     def observation(self, obs):
         for key, value in obs.items():
@@ -392,7 +405,12 @@ class ImageTransformWrapper(gym.ObservationWrapper):
                     # change to PIL Image for transform
                     value = value.squeeze(0)
                     img_pil = Image.fromarray(value)
-                    transformed_img_pil = self.tf(img_pil)
+                    if random.random() > self.p:
+                        # Add Identity transform helping model to learn the original images
+                        tf = v2.Identity()
+                        transformed_img_pil = tf(img_pil)
+                    else:
+                        transformed_img_pil = self.tf(img_pil)
                     obs[key] = np.array(transformed_img_pil)[None]
                 else:
                     obs[key] = value
