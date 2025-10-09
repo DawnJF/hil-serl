@@ -32,8 +32,9 @@ class Args:
     state_dim: int = 7
 
     batch_size: int = 128
-    epochs: int = 60
+    epochs: int = 80
     save_interval: int = 4
+    resume_checkpoint: str = None
 
     discrete_weight: list = field(
         default_factory=lambda: [4.0, 1.0, 4.0]
@@ -202,6 +203,10 @@ def train(args: Args):
     train_dataloader, test_dataloader = load_and_split_data(args)
 
     model = RLActor().to(device)
+
+    if args.resume_checkpoint:
+        model.load_checkpoint(args.resume_checkpoint)
+        logging.info(f"Resumed training from checkpoint: {args.resume_checkpoint}")
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=4e-5)
