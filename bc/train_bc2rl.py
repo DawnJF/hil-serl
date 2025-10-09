@@ -33,6 +33,7 @@ class Args:
 
     batch_size: int = 128
     epochs: int = 80
+    learning_rate: float = 1e-4
     save_interval: int = 4
     resume_checkpoint: str = None
 
@@ -209,7 +210,7 @@ def train(args: Args):
         logging.info(f"Resumed training from checkpoint: {args.resume_checkpoint}")
 
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=4e-5)
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     weights = torch.tensor(list(args.discrete_weight), dtype=torch.float32).to(device)
     discrete_criterion = nn.CrossEntropyLoss(weight=weights)
 
