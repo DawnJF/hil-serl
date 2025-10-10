@@ -352,8 +352,8 @@ class ActorWrapper:
             action_dist, gripper = self.model(observations)
 
         # action_mean = action_dist.mean
-        action_std = action_dist.stddev
-        print(f"Action std: {action_std}")
+        # action_std = action_dist.stddev
+        # print(f"Action std: {action_std}")
         if argmax:
             np_action = action_dist.mode().cpu().numpy().squeeze()
         else:
