@@ -26,14 +26,14 @@ class SACConfig:
     )
     replay_buffer_capacity: int = 200000
 
-    action_dim: int = 4  # 连续动作维度
+    action_dim: int = 4
     learning_rate: float = 3e-4
     discount: float = 0.99
     soft_target_update_rate: float = 0.005
     target_entropy: float = -action_dim / 2
-    num_discrete_actions: int = 3  # 改为3，对应 {0, 1, 2}
+    num_discrete_actions: int = 3  # {0, 1, 2}
 
-    temperature: float = 1.0
+    temperature: float = 0.001
 
 
 class SACPolicy:
@@ -249,8 +249,8 @@ class SACPolicy:
             actions = dist.rsample()
             log_probs = dist.log_prob(actions)
 
-        temperature_loss = (
-            -self.log_alpha * (log_probs + self.config.target_entropy)
+        temperature_loss = -(
+            self.log_alpha.exp() * (log_probs + self.config.target_entropy)
         ).mean()
         return temperature_loss
 

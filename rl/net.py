@@ -98,9 +98,10 @@ class ImageEncoder(nn.Module):
 
     def forward(self, x):
         # 输入: (B, C, H, W)
-        backbone_features = self.backbone(x)
-        projected = self.feature_proj(backbone_features)
-        return projected
+        x = self.backbone(x)
+        x = self.spatial_embeddings(x)
+        x = self.feature_proj(x)
+        return x
 
 
 class ProprioEncoder(nn.Module):
