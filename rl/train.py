@@ -44,6 +44,7 @@ class Config:
     resume_actor: Optional[str] = None
     freeze_actor: bool = False
     debug: bool = False
+    bc_agent: str = None
 
     # Training parameters
     max_steps: int = 1000000
@@ -530,10 +531,24 @@ def main(config: Config):
     sac_config = SACConfig()
     agent = SACPolicy(sac_config)
 
-    include_grasp_penalty = True
-
     bc_agent = None
-    # bc_agent = fake_bc_agent
+    if config.bc_agent is not None:
+        device = torch.device("cuda:0")
+        bc_model = RLActor().to(device)
+        bc_model.load_checkpoint(config.bc_agent)
+        bc_model.eval()
+
+        def bc_call(obs):
+            with torch.no_grad():
+                action_dist, gripper = bc_model(obs)
+                return action_dist.mode()
+
+        bc_agent = bc_call
+        print_green(f"Loaded BC agent from {config.bc_agent}")
+
+    agent.bc_agent = bc_agent
+
+    include_grasp_penalty = True
 
     # 检查是否需要从checkpoint恢复训练
     resume_step = 0

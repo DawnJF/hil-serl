@@ -49,6 +49,7 @@ class SACPolicy:
         # 初始化所有组件
         self._init()
         self.bc_actor_freezed = False
+        self.bc_agent = None
 
     def _init(self):
         continue_action_dim = self.config.action_dim - 1
@@ -340,10 +341,12 @@ class SACPolicy:
             )
 
             # 取最小Q值
-            min_q, _ = q_targets.min(dim=0)
+            target_next_min_q, _ = q_targets.min(dim=0)
+
+            target_next_min_q = self._select_max_q(target_next_min_q, next_observations)
 
             # Bellman方程目标：r + gamma * (Q(s',a') - alpha * log_pi(a'|s'))
-            target_q = rewards + (1 - done.float()) * self.discount * min_q
+            target_q = rewards + (1 - done.float()) * self.discount * target_next_min_q
 
         # 计算当前Q值预测
         if self.config.num_discrete_actions is not None:
@@ -683,6 +686,27 @@ class SACPolicy:
             [self.log_alpha], lr=self.config.learning_rate
         )
 
+    def _select_max_q(self, target_next_qs, obs):
+        if self.bc_agent is None:
+            return target_next_qs
+
+        bc_next_actions = self.bc_agent(obs)
+        bc_target_next_qs = self.critic_forward(
+            observations=obs,
+            actions=bc_next_actions,
+            use_target=True,
+        )
+        bc_target_next_min_q = bc_target_next_qs.min(axis=0)
+
+        # select max q between sac and bc
+        select_idcs = bc_target_next_min_q > target_next_qs
+
+        selected_next_qs = torch.where(
+            select_idcs, bc_target_next_min_q, target_next_qs
+        )
+        assert selected_next_qs.shape == target_next_qs.shape
+        return selected_next_qs
+
 
 def get_train_transform():
     """need HWC np or tensor, GPU compatible"""
@@ -764,12 +788,13 @@ def dict_data_to_torch(obj, image_transform, device=None):
 
 
 def test_learner(config: SACConfig):
-    # device = torch.device("cpu")
-    device = torch.device("cuda:1")
-    config.demo_path = [
-        "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl"
-    ]
-    batch_size = 256
+    device = torch.device("cpu")
+    batch_size = 4
+    # device = torch.device("cuda:1")
+    # config.demo_path = [
+    #     "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl"
+    # ]
+    # batch_size = 256
 
     from serl_launcher.serl_launcher.utils.timer_utils import Timer
 
