@@ -18,7 +18,6 @@ from gymnasium.spaces import flatten_space, flatten
 sys.path.append(os.getcwd())
 from examples.experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 from examples.experiments.usb_pickup_insertion.wrapper import HumanRewardEnv
-from serl_launcher.serl_launcher.wrappers.chunking import space_stack
 from serl_robot_infra.franka_env.utils.transformations import (
     construct_adjoint_matrix,
     construct_homogeneous_matrix,
@@ -259,6 +258,23 @@ class SERLObsWrapper(gym.ObservationWrapper):
 def stack_obs(obs_list):
     dict_list = {k: [dic[k] for dic in obs_list] for k in obs_list[0]}
     return {k: np.stack(v) for k, v in dict_list.items()}
+
+
+def space_stack(space: gym.Space, repeat: int):
+    if isinstance(space, gym.spaces.Box):
+        return gym.spaces.Box(
+            low=np.repeat(space.low[None], repeat, axis=0),
+            high=np.repeat(space.high[None], repeat, axis=0),
+            dtype=space.dtype,
+        )
+    elif isinstance(space, gym.spaces.Discrete):
+        return gym.spaces.MultiDiscrete([space.n] * repeat)
+    elif isinstance(space, gym.spaces.Dict):
+        return gym.spaces.Dict(
+            {k: space_stack(v, repeat) for k, v in space.spaces.items()}
+        )
+    else:
+        raise TypeError()
 
 
 class ChunkingWrapper(gym.Wrapper):

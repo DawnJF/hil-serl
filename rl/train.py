@@ -1,3 +1,4 @@
+import logging
 import sys
 import os
 import glob
@@ -27,7 +28,13 @@ from rl.sac_policy import (
     get_train_transform,
     get_eval_transform,
 )
-from utils.tools import get_device, print_dict_structure, print_dict_device
+from utils.tools import (
+    get_device,
+    logging_args,
+    print_dict_structure,
+    print_dict_device,
+    setup_logging,
+)
 
 
 @dataclass
@@ -293,7 +300,7 @@ def actor(
 
             obs = next_obs
             if done or truncated:
-                print(f"Episode done at step {step}, return: {running_return}")
+                logging.info(f"Episode done at step {step}, return: {running_return}")
 
                 info["episode"]["intervention_count"] = intervention_count
                 info["episode"]["intervention_steps"] = intervention_steps
@@ -487,7 +494,10 @@ def load_demo_data(config, demo_buffer):
 def resume_buffer_from_checkpoint(config: Config, replay_buffer, demo_buffer):
     if config.resume_checkpoint is None:
         return
-    folder = os.path.dirname(config.resume_checkpoint)
+    if os.path.isfile(config.resume_checkpoint):
+        folder = os.path.dirname(config.resume_checkpoint)
+    else:
+        folder = config.resume_checkpoint
     if os.path.exists(os.path.join(folder, "buffer")):
         for file in glob.glob(os.path.join(folder, "buffer/*.pkl")):
             with open(file, "rb") as f:
@@ -519,6 +529,9 @@ def main(config: Config):
         config.checkpoint_path, time.strftime("%Y%m%d-%H%M")
     )
     os.makedirs(config.checkpoint_path, exist_ok=True)
+    setup_logging(config.checkpoint_path)
+
+    logging_args(config)
     print_green(f"Experiment outputs will be saved to: {config.checkpoint_path}")
 
     torch.backends.cudnn.benchmark = True  # 提升卷积性能
@@ -545,6 +558,7 @@ def main(config: Config):
 
         bc_agent = bc_call
         print_green(f"Loaded BC agent from {config.bc_agent}")
+        logging.info(f"Loaded BC agent from {config.bc_agent}")
 
     agent.bc_agent = bc_agent
 
@@ -557,14 +571,21 @@ def main(config: Config):
         device = torch.device("cuda:1")
         agent.prepare(device)
         print_green(f"Moved SAC agent to {device}")
+        logging.info(f"SAC agent config: {sac_config}")
 
         if config.resume_checkpoint:
-            checkpoint_metadata = agent.load_checkpoint(config.resume_checkpoint)
+            try:
+                checkpoint_metadata = agent.load_checkpoint(config.resume_checkpoint)
 
-            resume_step = checkpoint_metadata.get("step", 0)
-            print_green(
-                f"Resumed training from step: {resume_step} : {config.resume_checkpoint}"
-            )
+                resume_step = checkpoint_metadata.get("step", 0)
+                print_green(
+                    f"Resumed training from step: {resume_step} : {config.resume_checkpoint}"
+                )
+                logging.info(
+                    f"Resumed training from step: {resume_step} : {config.resume_checkpoint}"
+                )
+            except Exception as e:
+                logging.warning(f"Failed to load checkpoint: {e}")
 
         # set up tensorboard logging
         tb_logger = make_tensorboard_logger(
@@ -590,6 +611,9 @@ def main(config: Config):
 
         print_green(f"demo buffer size: {len(demo_buffer)}")
         print_green(f"online buffer size: {len(replay_buffer)}")
+        logging.info(
+            f"demo buffer: {len(demo_buffer)}, online buffer: {len(replay_buffer)}"
+        )
 
         # learner loop
         learner(
@@ -609,9 +633,11 @@ def main(config: Config):
         device = torch.device("cuda:0")
         agent.prepare(device)
         print_green(f"Moved SAC agent to {device}")
+        logging.info(f"SAC agent config: {sac_config}")
 
         # actor loop
         print_green("starting actor loop")
+        logging.info("starting actor loop")
         actor(config, agent, data_store, intvn_data_store, env, device, bc_agent)
 
 
