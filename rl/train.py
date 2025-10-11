@@ -425,25 +425,27 @@ def learner(
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
     ):
+        timer.tick("train_loop")
         # run n-1 critic updates and 1 critic + actor update.
-        # This makes training on GPU faster by reducing the large batch transfer time from CPU to GPU
         for critic_step in range(config.cta_ratio - 1):
-            with timer.context("sample_replay_buffer"):
+            with timer.context("sample_buffer"):
                 replay_batch = next(replay_iterator)
                 demo_batch = next(demo_iterator)
                 batch = concat_batches(replay_batch, demo_batch, axis=0)
+            with timer.context("to_torch"):
                 batch = dict_data_to_torch(batch, train_image_transform, device=device)
 
             with timer.context("train_critics"):
                 update_info = agent.train_step(batch, critic_only=True)
 
-        with timer.context("sample_replay_buffer"):
+        with timer.context("sample_buffer"):
             replay_batch = next(replay_iterator)
             demo_batch = next(demo_iterator)
             batch = concat_batches(replay_batch, demo_batch, axis=0)
+        with timer.context("to_torch"):
             batch = dict_data_to_torch(batch, train_image_transform, device=device)
 
-        with timer.context("train"):
+        with timer.context("train_all"):
             update_info = agent.train_step(batch, critic_only=False)
 
         # publish the updated network
@@ -473,6 +475,8 @@ def learner(
                 checkpoint_file, step=step, additional_info=additional_info
             )
             print_green(f"Saved checkpoint at step {step}: {checkpoint_file}")
+
+        timer.tock("train_loop")
 
 
 ##############################################################################
