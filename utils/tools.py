@@ -4,10 +4,10 @@ import sys
 import torch
 
 
-def logging_args(args):
+def logging_args(args, name=""):
     # 格式化打印参数，提高可读性
     logging.info("=" * 50)
-    logging.info("Configuration:")
+    logging.info(f"{name} Parameters:")
     logging.info("=" * 50)
     for key, value in vars(args).items():
         logging.info(f"  {key:20}: {value}")

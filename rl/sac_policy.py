@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import pickle as pkl
@@ -531,7 +532,7 @@ class SACPolicy:
             if param_key in params:
                 param.data.copy_(params[param_key])
             else:
-                print(f"Warning: {param_key} not found in params during load.")
+                logging.info(f"Warning: {param_key} not found in params during load.")
 
         # 加载Critic网络参数
         for name, param in self.critic_ensemble.named_parameters():
@@ -539,7 +540,9 @@ class SACPolicy:
             if param_key in params:
                 param.data.copy_(params[param_key])
             else:
-                print(f"Warning: {param_key} not found in params during load.")
+                logging.warning(
+                    f"Warning: {param_key} not found in params during load."
+                )
 
         # 加载Critic目标网络参数
         for name, param in self.critic_target.named_parameters():
@@ -554,20 +557,24 @@ class SACPolicy:
                 if param_key in params:
                     param.data.copy_(params[param_key])
                 else:
-                    print(f"Warning: {param_key} not found in params during load.")
+                    logging.warning(
+                        f"Warning: {param_key} not found in params during load."
+                    )
 
             for name, param in self.discrete_critic_target.named_parameters():
                 param_key = f"discrete_critic_target.{name}"
                 if param_key in params:
                     param.data.copy_(params[param_key])
                 else:
-                    print(f"Warning: {param_key} not found in params during load.")
+                    logging.warning(
+                        f"Warning: {param_key} not found in params during load."
+                    )
 
         # 加载温度参数
         if "log_alpha" in params:
             self.log_alpha.data.copy_(params["log_alpha"])
         else:
-            print(f"Warning: log_alpha not found in params during load.")
+            logging.warning(f"Warning: log_alpha not found in params during load.")
 
     def save_checkpoint(
         self, filepath: str, step: int = 0, additional_info: dict = None

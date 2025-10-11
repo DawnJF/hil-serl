@@ -531,7 +531,7 @@ def main(config: Config):
     os.makedirs(config.checkpoint_path, exist_ok=True)
     setup_logging(config.checkpoint_path)
 
-    logging_args(config)
+    logging_args(config, "Config")
     print_green(f"Experiment outputs will be saved to: {config.checkpoint_path}")
 
     torch.backends.cudnn.benchmark = True  # 提升卷积性能
@@ -542,6 +542,7 @@ def main(config: Config):
 
     # 初始化SAC agent
     sac_config = SACConfig()
+    logging_args(sac_config, "SACConfig")
     agent = SACPolicy(sac_config)
 
     bc_agent = None

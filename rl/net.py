@@ -1,3 +1,4 @@
+import logging
 from torch.distributions import (
     Normal,
     Independent,
@@ -68,13 +69,13 @@ class ImageEncoder(nn.Module):
 
         # TODO
         output_shape = self.backbone(torch.zeros(1, 3, 128, 128)).shape
-        print(f"ImageEncoder Backbone output shape: {output_shape}")
+        logging.info(f"ImageEncoder Backbone output shape: {output_shape}")
 
         # Freeze backbone parameters if requested (similar to JAX frozen encoder)
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
-            print(
+            logging.info(
                 f"ImageEncoder Froze {sum(p.numel() for p in self.backbone.parameters())} backbone parameters"
             )
 
