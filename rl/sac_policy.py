@@ -477,7 +477,6 @@ class SACPolicy:
 
             temperature_loss = self.update_temperature(batch)
             metrics_loss["temperature_loss"] = temperature_loss.item()
-            metrics["alpha"] = self.log_alpha.exp().item()
 
         # Update target networks
         self.update_target_networks()

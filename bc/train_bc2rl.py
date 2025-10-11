@@ -31,7 +31,7 @@ class Args:
     image_num: int = 2  # 输入图像数量
     state_dim: int = 7
 
-    batch_size: int = 128
+    batch_size: int = 256
     epochs: int = 80
     learning_rate: float = 1e-4
     save_interval: int = 4
