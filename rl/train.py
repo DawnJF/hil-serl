@@ -419,7 +419,7 @@ def learner(
 
     timer = Timer()
 
-    train_image_transform = get_train_transform()
+    train_image_transform = get_eval_transform()
 
     print_green("starting learner loop")
     for step in tqdm.tqdm(
@@ -453,10 +453,6 @@ def learner(
             with timer.context("publish_network"):
                 server.publish_network(agent.get_params())
 
-        if tb_logger:
-            tb_logger.log(update_info, step=step)
-            tb_logger.log({"timer": timer.get_average_times()}, step=step)
-
         if step > 0 and step % config.checkpoint_period == 0:
             # 保存checkpoint
 
@@ -469,7 +465,6 @@ def learner(
                 "replay_buffer_size": len(replay_buffer),
                 "demo_buffer_size": len(demo_buffer),
                 "config": config,
-                "timer_stats": timer.get_average_times() if "timer" in locals() else {},
             }
             agent.save_checkpoint(
                 checkpoint_file, step=step, additional_info=additional_info
@@ -477,6 +472,10 @@ def learner(
             print_green(f"Saved checkpoint at step {step}: {checkpoint_file}")
 
         timer.tock("train_loop")
+
+        if tb_logger:
+            tb_logger.log(update_info, step=step)
+            tb_logger.log({"timer": timer.get_average_times()}, step=step)
 
 
 ##############################################################################
