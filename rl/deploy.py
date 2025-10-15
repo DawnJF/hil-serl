@@ -10,14 +10,17 @@ from rl.sac_policy import SACConfig, SACPolicy, dict_data_to_torch, get_eval_tra
 
 
 def main():
+    cp = "outputs/torch_rlpd/debug/20251014-1726/checkpoint_10000.pt"
     env = get_environment()
 
     sac_config = SACConfig()
     agent = SACPolicy(sac_config)
-    agent.eval()
 
     device = torch.device("cuda:0")
     agent.prepare(device)
+
+    agent.load_checkpoint(cp)
+    agent.eval()
 
     obs, info = env.reset()
 

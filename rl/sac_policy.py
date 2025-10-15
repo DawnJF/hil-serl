@@ -91,7 +91,11 @@ class SACPolicy:
             self.discrete_critic_target.eval()
 
     def freeze_bc_actor(self):
-        self.actor.freeze_bc_params()
+        # self.actor.freeze_bc_params()
+        for param in self.actor.parameters():
+            param.requires_grad = False
+        self.actor.eval()
+
         if self.config.num_discrete_actions is not None:
             for param in self.discrete_critic.parameters():
                 param.requires_grad = False
@@ -496,22 +500,27 @@ class SACPolicy:
 
         # Actor网络参数
         for name, param in self.actor.named_parameters():
+            name = remove_module_prefix_key(name)
             params[f"actor.{name}"] = param.data.clone()
 
         # Critic网络参数
         for name, param in self.critic_ensemble.named_parameters():
+            name = remove_module_prefix_key(name)
             params[f"critic_ensemble.{name}"] = param.data.clone()
 
         # Critic目标网络参数
         for name, param in self.critic_target.named_parameters():
+            name = remove_module_prefix_key(name)
             params[f"critic_target.{name}"] = param.data.clone()
 
         # 离散Critic网络参数（如果存在）
         if self.config.num_discrete_actions is not None:
             for name, param in self.discrete_critic.named_parameters():
+                name = remove_module_prefix_key(name)
                 params[f"discrete_critic.{name}"] = param.data.clone()
 
             for name, param in self.discrete_critic_target.named_parameters():
+                name = remove_module_prefix_key(name)
                 params[f"discrete_critic_target.{name}"] = param.data.clone()
 
         # 温度参数
@@ -589,7 +598,7 @@ class SACPolicy:
         """
         checkpoint = {
             "params": self.get_params(),
-            "config": self.config,
+            "config": self.config.__dict__,
             "step": step,
             "optimizer_states": {
                 "actor_optimizer": self.actor_optimizer.state_dict(),
@@ -661,7 +670,7 @@ class SACPolicy:
 
         return metadata
 
-    def prepare(self, device):
+    def prepare(self, device, train=False):
         """将所有模型和参数移到指定设备"""
         self.device = device
         self.actor.to(device)
@@ -671,6 +680,16 @@ class SACPolicy:
         if self.config.num_discrete_actions is not None:
             self.discrete_critic.to(device)
             self.discrete_critic_target.to(device)
+
+        if train:
+            self.actor = torch.nn.DataParallel(self.actor)
+            self.critic_ensemble = torch.nn.DataParallel(self.critic_ensemble)
+            self.critic_target = torch.nn.DataParallel(self.critic_target)
+            if self.config.num_discrete_actions is not None:
+                self.discrete_critic = torch.nn.DataParallel(self.discrete_critic)
+                self.discrete_critic_target = torch.nn.DataParallel(
+                    self.discrete_critic_target
+                )
 
         self.log_alpha.data = self.log_alpha.data.to(device)
         self.discount = self.discount.to(device)
@@ -745,6 +764,12 @@ def get_eval_transform():
     )
 
 
+def remove_module_prefix_key(key_name):
+    if key_name.startswith("module."):
+        return key_name[len("module.") :]
+    return key_name
+
+
 def dict_data_to_torch(obj, image_transform, device=None):
     if isinstance(obj, np.ndarray):
         tensor = torch.from_numpy(obj)
@@ -791,6 +816,40 @@ def dict_data_to_torch(obj, image_transform, device=None):
         return tuple(t) if isinstance(obj, tuple) else t
     else:
         return obj
+
+
+def test_load_params(config: SACConfig):
+    """
+    测试使用 DataParallel 的 agent 的 get_params 和不使用 DataParallel 的 agent 的 load_params 之间的兼容性
+    """
+    print("=== Testing DataParallel compatibility ===")
+
+    # 检查是否有可用的 GPU
+    device = get_device()
+    print(f"Using device: {device}")
+
+    # 创建第一个 agent，使用 DataParallel (train=True)
+    print("Creating agent with DataParallel...")
+    agent_with_dp = SACPolicy(config)
+    agent_with_dp.prepare(device, train=True)  # train=True 会使用 DataParallel
+
+    # 获取使用 DataParallel 的参数
+    print("Getting parameters from DataParallel agent...")
+    params_from_dp = agent_with_dp.get_params()
+    print(f"Number of parameter tensors from DataParallel agent: {len(params_from_dp)}")
+
+    # 打印一些参数的 key 名称以验证
+    sample_keys = list(params_from_dp.keys())[:5]
+    print(f"Sample parameter keys: {sample_keys}")
+
+    # 创建第二个 agent，不使用 DataParallel (train=False)
+    print("\nCreating agent without DataParallel...")
+    agent_without_dp = SACPolicy(config)
+    agent_without_dp.prepare(device, train=False)  # train=False 不会使用 DataParallel
+
+    # 加载从 DataParallel agent 获取的参数
+    print("Loading parameters from DataParallel agent to non-DataParallel agent...")
+    agent_without_dp.load_params(params_from_dp)
 
 
 def test_learner(config: SACConfig):
@@ -861,4 +920,12 @@ if __name__ == "__main__":
     # 测试配置
     config = tyro.cli(SACConfig)
 
-    test_learner(config)
+    # 运行参数加载测试
+    print("Running parameter loading test...")
+    test_load_params(config)
+
+    print("\n" + "=" * 50 + "\n")
+
+    # 运行原始的学习器测试
+    # print("Running learner test...")
+    # test_learner(config)

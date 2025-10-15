@@ -120,40 +120,6 @@ def concat_batches(batch1, batch2, axis=0):
             raise ValueError("Unsupported batch data type")
 
 
-def prefetch_batch_async(iterator, device, image_transform, num_prefetch=2):
-    """异步数据预取函数"""
-    import queue
-    import threading
-
-    batch_queue = queue.Queue(maxsize=num_prefetch)
-
-    def worker():
-        try:
-            while True:
-                replay_batch = next(iterator[0])
-                demo_batch = next(iterator[1])
-                batch = concat_batches(replay_batch, demo_batch, axis=0)
-
-                # 在后台线程中转换数据
-                from rl.sac_policy import dict_data_to_torch
-
-                batch = dict_data_to_torch(batch, image_transform, device=device)
-
-                batch_queue.put(batch)
-        except StopIteration:
-            batch_queue.put(None)
-
-    thread = threading.Thread(target=worker)
-    thread.daemon = True
-    thread.start()
-
-    while True:
-        batch = batch_queue.get()
-        if batch is None:
-            break
-        yield batch
-
-
 def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
 
@@ -347,12 +313,10 @@ def learner(
     demo_buffer,
     tb_logger,
     device,
-    start_step: int = 0,
 ):
     """
     The learner loop, which runs when "--learner" is set to True.
     """
-    step = start_step
 
     if config.resume_actor is not None:
         c_dict, d_dict = RLActor.READ_CHECKPOINT(config.resume_actor)
@@ -363,6 +327,26 @@ def learner(
     if config.freeze_actor:
         agent.freeze_bc_actor()
         print_green("Froze the actor and discrete critic parameters.")
+
+    if config.resume_checkpoint:
+        try:
+            checkpoint_metadata = agent.load_checkpoint(config.resume_checkpoint)
+
+            resume_step = checkpoint_metadata.get("step", 0)
+            print_green(
+                f"Resumed training from step: {resume_step} : {config.resume_checkpoint}"
+            )
+            logging.info(
+                f"Resumed training from step: {resume_step} : {config.resume_checkpoint}"
+            )
+        except Exception as e:
+            logging.warning(f"Failed to load checkpoint: {e}")
+
+    agent.prepare(device)
+    print_green(f"Moved SAC agent to {device}")
+    logging.info(f"Moved SAC agent to {device}")
+
+    step = 0
 
     def stats_callback(type: str, payload: dict) -> dict:
         """Callback for when server receives stats request."""
@@ -449,7 +433,11 @@ def learner(
             update_info = agent.train_step(batch, critic_only=False)
 
         # publish the updated network
-        if step > 0 and step % (config.steps_per_update) == 0:
+        if (
+            step > 0
+            and step % (config.steps_per_update) == 0
+            and not config.freeze_actor
+        ):
             with timer.context("publish_network"):
                 server.publish_network(agent.get_params())
 
@@ -573,23 +561,6 @@ def main(config: Config):
 
     if config.learner:
         device = torch.device("cuda:1")
-        agent.prepare(device)
-        print_green(f"Moved SAC agent to {device}")
-        logging.info(f"SAC agent config: {sac_config}")
-
-        if config.resume_checkpoint:
-            try:
-                checkpoint_metadata = agent.load_checkpoint(config.resume_checkpoint)
-
-                resume_step = checkpoint_metadata.get("step", 0)
-                print_green(
-                    f"Resumed training from step: {resume_step} : {config.resume_checkpoint}"
-                )
-                logging.info(
-                    f"Resumed training from step: {resume_step} : {config.resume_checkpoint}"
-                )
-            except Exception as e:
-                logging.warning(f"Failed to load checkpoint: {e}")
 
         # set up tensorboard logging
         tb_logger = make_tensorboard_logger(
@@ -627,7 +598,6 @@ def main(config: Config):
             demo_buffer=demo_buffer,
             tb_logger=tb_logger,
             device=device,
-            start_step=resume_step,
         )
 
     elif config.actor:
