@@ -395,7 +395,7 @@ class SACPolicy:
         """
 
         critics = self.critic_target if use_target else self.critic_ensemble
-        q_values = critics(observations, actions)
+        q_values = critics(observations, actions).transpose(0, 1)  # (2, B)
         return q_values
 
     def discrete_critic_forward(self, observations, use_target=False) -> torch.Tensor:
@@ -417,37 +417,6 @@ class SACPolicy:
     def forward_critic_eval(self, obs, actions):
         """Evaluate Q-values for action selection (used in select_action_v2)"""
         with torch.no_grad():
-            # Process observations if they're not tensors
-            if isinstance(obs, dict):
-                obs_processed = {}
-                for k, v in obs.items():
-                    if isinstance(v, np.ndarray):
-                        obs_processed[k] = torch.from_numpy(v)
-                        # Add batch dimension if missing
-                        if len(obs_processed[k].shape) == 1:
-                            obs_processed[k] = obs_processed[k].unsqueeze(0)
-                    elif isinstance(v, torch.Tensor):
-                        obs_processed[k] = v
-                        if len(v.shape) == 1:
-                            obs_processed[k] = v.unsqueeze(0)
-                    else:
-                        obs_processed[k] = v
-                obs = obs_processed
-
-            # Process actions
-            if isinstance(actions, np.ndarray):
-                actions = torch.from_numpy(actions).float()
-            elif not isinstance(actions, torch.Tensor):
-                actions = torch.tensor(actions).float()
-
-            # Add batch dimension if missing
-            if len(actions.shape) == 1:
-                actions = actions.unsqueeze(0)
-
-            # Only use continuous action part for critic evaluation
-            if self.config.num_discrete_actions is not None and actions.shape[-1] > 3:
-                actions = actions[..., :-1]  # Remove discrete action
-
             # Forward through critic
             q_values = self.critic_forward(obs, actions, use_target=False)
 
@@ -682,7 +651,7 @@ class SACPolicy:
             self.discrete_critic_target.to(device)
 
         if train:
-            self.actor = torch.nn.DataParallel(self.actor)
+            # self.actor = torch.nn.DataParallel(self.actor)
             self.critic_ensemble = torch.nn.DataParallel(self.critic_ensemble)
             self.critic_target = torch.nn.DataParallel(self.critic_target)
             if self.config.num_discrete_actions is not None:
@@ -721,7 +690,7 @@ class SACPolicy:
             actions=bc_next_actions,
             use_target=True,
         )
-        bc_target_next_min_q = bc_target_next_qs.min(axis=0)
+        bc_target_next_min_q, _ = bc_target_next_qs.min(axis=0)
 
         # select max q between sac and bc
         select_idcs = bc_target_next_min_q > target_next_qs

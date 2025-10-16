@@ -128,35 +128,19 @@ def select_action_v2(actions, bc_agent, obs, agent):
     if bc_agent is None:
         return actions
 
-    xyz = actions[:3]
+    xyz = actions[:, :3]
     bc_actions = bc_agent(obs)
-    if isinstance(bc_actions, (list, tuple)):
-        bc_actions = bc_actions[0]
-    if isinstance(bc_actions, torch.Tensor):
-        bc_actions = torch.cat([bc_actions, torch.tensor([actions[3]])], dim=0)
-    else:
-        bc_actions = np.append(bc_actions, actions[3])
-
-    bc_xyz = bc_actions[:3]
-
-    # 转换为适合的格式调用forward_critic_eval
-    obs_for_critic = {"state": obs} if not isinstance(obs, dict) else obs
 
     with torch.no_grad():
-        q = agent.forward_critic_eval(obs_for_critic, xyz)
-        bc_q = agent.forward_critic_eval(obs_for_critic, bc_xyz)
+        q = agent.forward_critic_eval(obs, xyz)
+        bc_q = agent.forward_critic_eval(obs, bc_actions)
 
-        if isinstance(q, torch.Tensor):
-            q_min = q.min()
-            bc_q_min = bc_q.min()
-        else:
-            q_min = q.min(axis=0)
-            bc_q_min = bc_q.min(axis=0)
+        q_min, _ = q.min(axis=0)
+        bc_q_min, _ = bc_q.min(axis=0)
 
-        if bc_q_min > q_min:
-            return bc_actions
-        else:
-            return actions
+        select_xyz = bc_actions if bc_q_min > q_min else xyz
+
+        return torch.cat([select_xyz, actions[:, 3:]], dim=1)
 
 
 ##############################################################################
@@ -222,7 +206,7 @@ def actor(
                 obs_torch = dict_data_to_torch(obs, eval_image_transform, device=device)
                 actions = agent.sample_actions(obs_torch, argmax=False)
 
-                actions = select_action_v2(actions, bc_agent, obs, agent)
+                actions = select_action_v2(actions, bc_agent, obs_torch, agent)
 
                 if isinstance(actions, torch.Tensor):
                     actions = actions.cpu().numpy()
@@ -342,7 +326,7 @@ def learner(
         except Exception as e:
             logging.warning(f"Failed to load checkpoint: {e}")
 
-    agent.prepare(device)
+    agent.prepare(device, True)
     print_green(f"Moved SAC agent to {device}")
     logging.info(f"Moved SAC agent to {device}")
 
@@ -406,9 +390,7 @@ def learner(
     train_image_transform = get_eval_transform()
 
     print_green("starting learner loop")
-    for step in tqdm.tqdm(
-        range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
-    ):
+    for step in tqdm.tqdm(range(config.max_steps), dynamic_ncols=True, desc="learner"):
         timer.tick("train_loop")
         # run n-1 critic updates and 1 critic + actor update.
         for critic_step in range(config.cta_ratio - 1):
@@ -537,9 +519,9 @@ def main(config: Config):
     agent = SACPolicy(sac_config)
 
     bc_agent = None
+    bc_model = None
     if config.bc_agent is not None:
-        device = torch.device("cuda:0")
-        bc_model = RLActor().to(device)
+        bc_model = RLActor()
         bc_model.load_checkpoint(config.bc_agent)
         bc_model.eval()
 
@@ -556,11 +538,10 @@ def main(config: Config):
 
     include_grasp_penalty = True
 
-    # 检查是否需要从checkpoint恢复训练
-    resume_step = 0
-
     if config.learner:
-        device = torch.device("cuda:1")
+        device = torch.device("cuda:0")
+        if bc_model is not None:
+            bc_model.to(device)
 
         # set up tensorboard logging
         tb_logger = make_tensorboard_logger(
@@ -604,8 +585,10 @@ def main(config: Config):
         data_store = QueuedDataStore(50000)
         intvn_data_store = QueuedDataStore(50000)  # demo_buffer
 
-        device = torch.device("cuda:0")
+        device = torch.device("cuda:1")
         agent.prepare(device)
+        if bc_model is not None:
+            bc_model.to(device)
         print_green(f"Moved SAC agent to {device}")
         logging.info(f"SAC agent config: {sac_config}")
 
@@ -621,16 +604,23 @@ if __name__ == "__main__":
 
 
 """
-# 从头开始训练
-python rl/train.py --learner --demo_path "/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl" --max_steps 100
+python rl/train.py --actor
 
-python rl/train.py --actor --debug --max_steps 100
+python rl/train.py --actor --bc_agent outputs/bc2rl/20251013_093116/checkpoint-60.pth
+
+# 从头开始训练
+python rl/train.py --learner
+python rl/train.py --learner --demo_path /Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl
+python rl/train.py --learner --demo_path /home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl
+
 
 # 从checkpoint恢复训练
-python rl/train.py --learner --resume_checkpoint "outputs/torch_rlpd/debug/20250930-1441/checkpoint_400.pt"
+python rl/train.py --learner --resume_checkpoint outputs/torch_rlpd/debug/20251015-1421/checkpoint_1200.pt
 
+python rl/train.py --learner --freeze_actor --resume_actor outputs/bc2rl/20251013_093116/checkpoint-60.pth
 
-python rl/train.py --learner --freeze_actor --resume_actor outputs/bc2rl_20250928_173221/checkpoint-32.pth 
+python rl/train.py --learner --bc_agent outputs/bc2rl/20251013_093116/checkpoint-60.pth --demo_path /home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl
+
 """
 
 

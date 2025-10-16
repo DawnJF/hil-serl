@@ -283,7 +283,7 @@ class Critic(nn.Module):
         q_values = []
         for critic in self.critics:
             q_values.append(critic(critic_input))
-        return torch.stack(q_values, dim=0)  # (2, B)
+        return torch.stack(q_values, dim=-1)  # (B, 2)
 
 
 class DiscreteQCritic(nn.Module):
