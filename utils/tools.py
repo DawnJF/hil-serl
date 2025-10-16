@@ -60,7 +60,7 @@ def setup_logging(out_dir):
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format="%(asctime)s %(process)d %(levelname)s %(message)s",
         handlers=[
             logging.FileHandler(os.path.join(out_dir, "run.log")),

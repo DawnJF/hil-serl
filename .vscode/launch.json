@@ -106,8 +106,10 @@
             "program": "${workspaceFolder}/rl/train.py",
             "args": [
                 "--learner",
-                "--debug",
-                "--demo_path=/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl",
+                // "--resume_checkpoint=outputs/torch_rlpd/debug/20250930-1441/checkpoint_400.pt",
+                // "--demo_path=/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl",
+                "--bc_agent=outputs/bc2rl/20251013_093116/checkpoint-60.pth",
+                "--demo_path=/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl"
             ]
         },
         {
@@ -117,7 +119,7 @@
             "program": "${workspaceFolder}/rl/train.py",
             "args": [
                 "--actor",
-                "--debug",
+                "--bc_agent=outputs/bc2rl/20251013_093116/checkpoint-60.pth",
             ]
         },
     ]
