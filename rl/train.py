@@ -326,7 +326,7 @@ def learner(
         except Exception as e:
             logging.warning(f"Failed to load checkpoint: {e}")
 
-    agent.prepare(device, True)
+    agent.prepare(device)
     print_green(f"Moved SAC agent to {device}")
     logging.info(f"Moved SAC agent to {device}")
 

@@ -65,7 +65,7 @@ class ImageEncoder(nn.Module):
 
         self.backbone = efficientnet_b0(
             weights=EfficientNet_B0_Weights.IMAGENET1K_V1
-        ).features[:-2]
+        ).features[:-3]
 
         # TODO
         output_shape = self.backbone(torch.zeros(1, 3, 128, 128)).shape

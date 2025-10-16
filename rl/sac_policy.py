@@ -650,7 +650,7 @@ class SACPolicy:
             self.discrete_critic.to(device)
             self.discrete_critic_target.to(device)
 
-        if train:
+        if train:  # NOTE NO!更慢...
             # self.actor = torch.nn.DataParallel(self.actor)
             self.critic_ensemble = torch.nn.DataParallel(self.critic_ensemble)
             self.critic_target = torch.nn.DataParallel(self.critic_target)
@@ -700,6 +700,52 @@ class SACPolicy:
         )
         assert selected_next_qs.shape == target_next_qs.shape
         return selected_next_qs
+
+    def print_model_parameters(self):
+        """
+        打印每个网络的参数量，并详细分析 image encoder 和其他组件
+        """
+        print("=" * 80)
+        print("SAC Policy Model Parameters Summary")
+        print("=" * 80)
+
+        # Actor网络参数分析
+        print("\n🎭 Actor Network:")
+        print("-" * 40)
+        print("summary (trainable, total):")
+
+        print(" " * 8 + f"{count_parameters(self.actor)}")
+        print("encoder:")
+        print(" " * 8 + f"{count_parameters(self.actor.encoder)}")
+        print("network:")
+        print(" " * 8 + f"{count_parameters(self.actor.network)}")
+
+        # Critic网络参数分析
+        print("\n🧮 Critic Network Ensemble:")
+        print("-" * 40)
+        print("summary (trainable, total):")
+
+        print(" " * 8 + f"{count_parameters(self.critic_ensemble)}")
+        print("encoder:")
+        print(" " * 8 + f"{count_parameters(self.critic_ensemble.encoder)}")
+        print("critics:")
+        print(" " * 8 + f"{count_parameters(self.critic_ensemble.critics)}")
+
+        # discrete Critic网络参数分析
+        if self.config.num_discrete_actions is not None:
+            print("\n🎲 Discrete Critic Network:")
+            print("-" * 40)
+            print("summary (trainable, total):")
+
+            print(" " * 8 + f"{count_parameters(self.discrete_critic)}")
+            print("encoder:")
+            print(" " * 8 + f"{count_parameters(self.discrete_critic.encoder)}")
+
+
+def count_parameters(model: torch.nn.Module) -> int:
+    return sum(p.numel() for p in model.parameters() if p.requires_grad), sum(
+        p.numel() for p in model.parameters()
+    )
 
 
 def get_train_transform():
@@ -889,12 +935,15 @@ if __name__ == "__main__":
     # 测试配置
     config = tyro.cli(SACConfig)
 
-    # 运行参数加载测试
-    print("Running parameter loading test...")
-    test_load_params(config)
-
     print("\n" + "=" * 50 + "\n")
+
+    # 运行参数加载测试
+    # print("Running parameter loading test...")
+    # test_load_params(config)
 
     # 运行原始的学习器测试
     # print("Running learner test...")
     # test_learner(config)
+
+    agent = SACPolicy(config)
+    agent.print_model_parameters()
