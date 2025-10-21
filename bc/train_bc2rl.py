@@ -225,8 +225,8 @@ def train(args: Args):
             # 计算log_prob并使用mean而不是sum，避免梯度爆炸
             log_probs = dist.log_prob(continue_label_clipped)
 
-            # 添加数值稳定性检查
-            log_probs = torch.clamp(log_probs, min=-50.0, max=0.0)
+            # 概率密度可以 > 1，因此其对数可能 > 0
+            # log_probs = torch.clamp(log_probs, min=-50.0, max=0.0)
 
             continue_loss = -log_probs.mean()
         else:
@@ -310,7 +310,7 @@ def train(args: Args):
         writer.add_scalar("Loss/Val_Continue_Epoch", val_loss_continue, epoch)
         writer.add_scalar("Loss/Val_Discrete_Epoch", val_loss_discrete, epoch)
 
-        logging.info(f"Epoch {epoch+1}/{args.epochs}:")
+        logging.info(f"Epoch {epoch+1}/{args.epochs}, Step {global_step}:")
         logging.info(f"  Train Loss: {avg_loss:.4f}")
         logging.info(f"  Val Loss: {val_loss:.4f}")
         logging.info(f"  Val Continue Loss: {val_loss_continue:.4f}")

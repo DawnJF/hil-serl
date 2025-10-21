@@ -122,5 +122,16 @@
                 "--bc_agent=outputs/bc2rl/20251013_093116/checkpoint-60.pth",
             ]
         },
+        {
+            "name": "jax bc",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/train_bc.py",
+            "args": [],
+            "env": {
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".1"
+            }
+        },
     ]
 }

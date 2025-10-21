@@ -11,7 +11,7 @@ from flax.training import checkpoints
 import os
 import pickle as pkl
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
-
+import logging
 from serl_launcher.agents.continuous.bc import BCAgent
 
 from serl_launcher.utils.launcher import (
@@ -23,12 +23,17 @@ from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
 
 from experiments.mappings import CONFIG_MAPPING
 from experiments.config import DefaultTrainingConfig
+from utils.tools import setup_logging
+
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
+flags.DEFINE_string(
+    "exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder."
+)
 flags.DEFINE_integer("seed", 42, "Random seed.")
-flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
-flags.DEFINE_string("bc_checkpoint_path", None, "Path to save checkpoints.")
+flags.DEFINE_string(
+    "bc_checkpoint_path", "outputs/bc/debug", "Path to save checkpoints."
+)
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_integer("train_steps", 20_000, "Number of pretraining steps.")
 flags.DEFINE_bool("save_video", False, "Save video of the evaluation.")
@@ -38,6 +43,10 @@ flags.DEFINE_boolean(
     "debug", False, "Debug mode."
 )  # debug mode will disable wandb logging
 
+if not hasattr(jax, "tree_map"):
+    jax.tree_map = jax.tree.map
+if not hasattr(jax, "tree_leaves"):
+    jax.tree_leaves = jax.tree.leaves
 
 devices = jax.local_devices()
 num_devices = len(devices)
@@ -53,6 +62,7 @@ def print_yellow(x):
 
 
 ##############################################################################
+
 
 def eval(
     env,
@@ -105,7 +115,7 @@ def train(
         },
         device=sharding.replicate(),
     )
-    
+
     # Pretrain BC policy to get started
     for step in tqdm.tqdm(
         range(FLAGS.train_steps),
@@ -114,11 +124,17 @@ def train(
     ):
         batch = next(bc_replay_iterator)
         bc_agent, bc_update_info = bc_agent.update(batch)
+        wandb_logger.log({"bc": bc_update_info}, step=step)
         if step % config.log_period == 0 and wandb_logger:
-            wandb_logger.log({"bc": bc_update_info}, step=step)
+            logging.info(f"bc pretraining step: {step}")
+            logging.info(f"bc update info: {bc_update_info}")
+
         if step > FLAGS.train_steps - 100 and step % 10 == 0:
             checkpoints.save_checkpoint(
-                os.path.abspath(FLAGS.bc_checkpoint_path), bc_agent.state, step=step, keep=5
+                os.path.abspath(FLAGS.bc_checkpoint_path),
+                bc_agent.state,
+                step=step,
+                keep=5,
             )
     print_green("bc pretraining done and saved checkpoint")
 
@@ -127,6 +143,7 @@ def train(
 
 
 def main(_):
+
     config: DefaultTrainingConfig = CONFIG_MAPPING[FLAGS.exp_name]()
 
     assert config.batch_size % num_devices == 0
@@ -135,7 +152,6 @@ def main(_):
     env = config.get_environment(
         fake_env=not eval_mode,
         save_video=FLAGS.save_video,
-        classifier=True,
     )
     env = RecordEpisodeStatistics(env)
 
@@ -154,9 +170,15 @@ def main(_):
     )
 
     if not eval_mode:
+        FLAGS.bc_checkpoint_path = os.path.join(
+            FLAGS.bc_checkpoint_path, time.strftime("%Y%m%d_%H%M%S")
+        )
+        os.makedirs(FLAGS.bc_checkpoint_path, exist_ok=True)
         assert not os.path.isdir(
             os.path.join(FLAGS.bc_checkpoint_path, f"checkpoint_{FLAGS.train_steps}")
         )
+
+        setup_logging(FLAGS.bc_checkpoint_path)
 
         bc_replay_buffer = MemoryEfficientReplayBufferDataStore(
             env.observation_space,
@@ -172,20 +194,24 @@ def main(_):
             debug=FLAGS.debug,
         )
 
-        demo_path = glob.glob(os.path.join(os.getcwd(), "demo_data", "*.pkl"))
-        
+        # TODO
+        # demo_path = glob.glob(os.path.join(os.getcwd(), "demo_data", "*.pkl"))
+        demo_path = [
+            "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl"
+        ]
+
         assert demo_path is not []
 
         for path in demo_path:
             with open(path, "rb") as f:
                 transitions = pkl.load(f)
                 for transition in transitions:
-                    if np.linalg.norm(transition['actions']) > 0.0:
+                    if np.linalg.norm(transition["actions"]) > 0.0:
                         bc_replay_buffer.insert(transition)
         print(f"bc replay buffer size: {len(bc_replay_buffer)}")
 
-        # learner loop
-        print_green("starting learner loop")
+        # train loop
+        print_green("starting train loop")
         train(
             bc_agent=bc_agent,
             bc_replay_buffer=bc_replay_buffer,
