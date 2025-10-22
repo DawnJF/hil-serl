@@ -35,7 +35,7 @@ flags.DEFINE_string(
     "bc_checkpoint_path", "outputs/bc/debug", "Path to save checkpoints."
 )
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
-flags.DEFINE_integer("train_steps", 20_000, "Number of pretraining steps.")
+flags.DEFINE_integer("train_steps", 10_000, "Number of pretraining steps.")
 flags.DEFINE_bool("save_video", False, "Save video of the evaluation.")
 
 
@@ -142,6 +142,43 @@ def train(
 ##############################################################################
 
 
+def load_demo_data(demo_buffer):
+    demo_path = []
+
+    # 定义要加载的文件列表
+    data_files = [
+        "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl",
+        # classifier_data 子目录中的文件
+        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12/*.pkl",
+        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
+        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-15/*.pkl",
+    ]
+
+    import glob
+
+    for file_pattern in data_files:
+        # 处理通配符模式
+        if "*" in file_pattern:
+            # 使用 glob 查找匹配的文件
+
+            matched_files = glob.glob(file_pattern)
+
+            if not matched_files:
+                logging.warning(f"没有找到匹配的文件: {file_pattern}")
+                continue
+            for file_path in matched_files:
+                demo_path.append(file_path)
+        else:
+            demo_path.append(file_pattern)
+
+    for path in demo_path:
+        with open(path, "rb") as f:
+            transitions = pkl.load(f)
+            for transition in transitions:
+                if np.linalg.norm(transition["actions"]) > 0.0:
+                    demo_buffer.insert(transition)
+
+
 def main(_):
 
     config: DefaultTrainingConfig = CONFIG_MAPPING[FLAGS.exp_name]()
@@ -194,21 +231,8 @@ def main(_):
             debug=FLAGS.debug,
         )
 
-        # TODO
-        # demo_path = glob.glob(os.path.join(os.getcwd(), "demo_data", "*.pkl"))
-        demo_path = [
-            "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl"
-        ]
-
-        assert demo_path is not []
-
-        for path in demo_path:
-            with open(path, "rb") as f:
-                transitions = pkl.load(f)
-                for transition in transitions:
-                    if np.linalg.norm(transition["actions"]) > 0.0:
-                        bc_replay_buffer.insert(transition)
-        print(f"bc replay buffer size: {len(bc_replay_buffer)}")
+        load_demo_data(bc_replay_buffer)
+        print_green(f"bc replay buffer size: {len(bc_replay_buffer)}")
 
         # train loop
         print_green("starting train loop")
