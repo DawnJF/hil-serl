@@ -25,6 +25,9 @@ from serl_launcher.agents.continuous.sac_hybrid_dual import SACAgentHybridDualAr
 from serl_launcher.utils.timer_utils import Timer
 from serl_launcher.utils.train_utils import concat_batches
 
+from serl_launcher.agents.continuous.bc import BCAgent
+from serl_launcher.utils.launcher import make_bc_agent
+
 from agentlace.trainer import TrainerServer, TrainerClient
 from agentlace.data.data_store import QueuedDataStore
 
@@ -41,14 +44,17 @@ from experiments.mappings import CONFIG_MAPPING
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder.")
+flags.DEFINE_string(
+    "exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder."
+)
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_boolean("learner", False, "Whether this is a learner.")
 flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_integer("port", 5588, "port")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
-flags.DEFINE_string("checkpoint_path", "outputs/debug", "Path to save checkpoints.")
+flags.DEFINE_string("checkpoint_path", "outputs/rlpd", "Path to save checkpoints.")
+flags.DEFINE_string("bc_checkpoint_path", None, "Path to save BC checkpoints for IBRL")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_boolean("save_video", False, "Save video.")
 
@@ -56,7 +62,11 @@ flags.DEFINE_boolean(
     "debug", False, "Debug mode."
 )  # debug mode will disable wandb logging
 
-flags.DEFINE_string("wandb_mode", "online", "wandb mode, online or offline, if debug is true, mode is disabled.")
+flags.DEFINE_string(
+    "wandb_mode",
+    "online",
+    "wandb mode, online or offline, if debug is true, mode is disabled.",
+)
 flags.DEFINE_string("wandb_output_dir", None, "wandb output dir")
 
 devices = jax.local_devices()
@@ -68,18 +78,26 @@ def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
 
 
-# def select_action(actions, bc_agent, obs, client):
-#     if bc_agent is None:
-#         return actions
+def select_action_v2(actions, bc_agent, obs, agent, seed):
+    if bc_agent is None:
+        return actions
 
-#     bc_actions = bc_agent(obs["state"])
-#     result = client.request(
-#         "request-q", {"actions": actions, "bc_actions": bc_actions, "obs": obs}
-#     )
-#     if result["select_bc"]:
-#         return bc_actions
-#     else:
-#         return actions
+    xyz = actions[:3]
+    bc_actions = bc_agent.sample_actions(
+        observations=jax.device_put(obs),
+        seed=seed,
+        argmax=True,
+    )
+
+    bc_xyz = bc_actions[:3]
+
+    q = agent.forward_critic_eval(obs, xyz)
+    bc_q = agent.forward_critic_eval(obs, bc_xyz)
+
+    if bc_q.min(axis=0) > q.min(axis=0):
+        return bc_actions
+    else:
+        return actions
 
 
 ##############################################################################
@@ -143,7 +161,8 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
                     seed=key,
                     argmax=False,
                 )
-                # actions = select_action(actions, bc_agent, obs, client)
+
+                actions = select_action_v2(actions, bc_agent, obs, agent, key)
                 actions = np.asarray(jax.device_get(actions))
 
         # Step environment
@@ -174,8 +193,8 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
                 masks=1.0 - done,
                 dones=done,
             )
-            if 'grasp_penalty' in info:
-                transition['grasp_penalty']= info['grasp_penalty']
+            if "grasp_penalty" in info:
+                transition["grasp_penalty"] = info["grasp_penalty"]
             data_store.insert(transition)
             transitions.append(copy.deepcopy(transition))
             if already_intervened:
@@ -295,7 +314,9 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
         train_networks_to_update = frozenset({"critic", "actor", "temperature"})
     else:
         train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
-        train_networks_to_update = frozenset({"critic", "grasp_critic", "actor", "temperature"})
+        train_networks_to_update = frozenset(
+            {"critic", "grasp_critic", "actor", "temperature"}
+        )
 
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
@@ -360,26 +381,31 @@ def main(_):
         debug=FLAGS.debug,
     )
     env = RecordEpisodeStatistics(env)
+    print_green(f"observation_space: {env.observation_space}")
+    print_green(f"action_space: {env.action_space}")
 
     rng, sampling_rng = jax.random.split(rng)
-    
-    if config.setup_mode == 'single-arm-fixed-gripper' or config.setup_mode == 'dual-arm-fixed-gripper':   
-        agent: SACAgent = make_sac_pixel_agent(
-            seed=FLAGS.seed,
-            sample_obs=env.observation_space.sample(),
-            sample_action=env.action_space.sample(),
-            image_keys=config.image_keys,
-            encoder_type=config.encoder_type,
-            discount=config.discount,
-        )
-        include_grasp_penalty = False
-    elif config.setup_mode == "single-arm-learned-gripper":  # this
-        def fake_bc_agent(obs):
-            batch = len(obs['state'])
-            return jax.numpy.zeros((batch, 3))
-        
+
+    if config.setup_mode == "single-arm-learned-gripper":  # this
+
         bc_agent = None
-        # bc_agent = fake_bc_agent
+        if FLAGS.bc_checkpoint_path is not None:
+
+            bc_agent: BCAgent = make_bc_agent(
+                seed=FLAGS.seed,
+                sample_obs=env.observation_space.sample(),
+                sample_action=env.action_space.sample(),
+                image_keys=config.image_keys,
+                encoder_type=config.encoder_type,
+            )
+            bc_agent: BCAgent = jax.device_put(
+                jax.tree_map(jnp.array, bc_agent), sharding.replicate()
+            )
+            bc_ckpt = checkpoints.restore_checkpoint(
+                FLAGS.bc_checkpoint_path,
+                bc_agent.state,
+            )
+            bc_agent = bc_agent.replace(state=bc_ckpt)
 
         agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
             seed=FLAGS.seed,
@@ -389,7 +415,8 @@ def main(_):
             encoder_type=config.encoder_type,
             discount=config.discount,
             # max_steps=config.max_steps,
-            # if_schedule_lr=False
+            # if_schedule_lr=True,
+            bc_agent=bc_agent,
         )
         include_grasp_penalty = True
     elif config.setup_mode == "dual-arm-learned-gripper":
@@ -410,7 +437,9 @@ def main(_):
     agent = jax.device_put(jax.tree_map(jnp.array, agent), sharding.replicate())
 
     if FLAGS.checkpoint_path is not None and os.path.exists(FLAGS.checkpoint_path):
-        input("Checkpoint path already exists. Press Enter to resume training.")
+        input(
+            f"Checkpoint path {FLAGS.checkpoint_path} already exists. Press Enter to resume training."
+        )
         ckpt = checkpoints.restore_checkpoint(
             os.path.abspath(FLAGS.checkpoint_path),
             agent.state,
@@ -450,13 +479,18 @@ def main(_):
             include_grasp_penalty=include_grasp_penalty,
         )
 
-        assert FLAGS.demo_path is not None
+        # assert FLAGS.demo_path is not None
+        if FLAGS.demo_path is None:
+            FLAGS.demo_path = []
+            print_green("No demo path provided, proceeding with empty demo buffer.")
         for path in FLAGS.demo_path:
             with open(path, "rb") as f:
                 transitions = pkl.load(f)
                 for transition in transitions:
-                    if 'infos' in transition and 'grasp_penalty' in transition['infos']:
-                        transition['grasp_penalty'] = transition['infos']['grasp_penalty']
+                    if "infos" in transition and "grasp_penalty" in transition["infos"]:
+                        transition["grasp_penalty"] = transition["infos"][
+                            "grasp_penalty"
+                        ]
                     demo_buffer.insert(transition)
         print_green(f"demo buffer size: {len(demo_buffer)}")
         print_green(f"online buffer size: {len(replay_buffer)}")
@@ -504,14 +538,7 @@ def main(_):
 
         # actor loop
         print_green("starting actor loop")
-        actor(
-            agent,
-            data_store,
-            intvn_data_store,
-            env,
-            sampling_rng,
-            bc_agent=bc_agent
-        )
+        actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=bc_agent)
 
     else:
         raise NotImplementedError("Must be either a learner or an actor")

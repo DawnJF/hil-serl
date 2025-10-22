@@ -13,19 +13,17 @@
             "args": "${command:pickArgs}"
         },
         {
-            "name": "learner usb_pickup_insertion",
+            "name": "learner",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/train_rlpd.py",
             "console": "integratedTerminal",
             "args": [
-                "--exp_name=usb_pickup_insertion",
-                // "--checkpoint_path=first_run",
                 "--demo_path=/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_5_11-05-02.pkl",
                 "--learner",
                 "--debug",
                 "--port=5888",
-                // "--checkpoint_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl"
+                "--bc_checkpoint_path=/home/facelesswei/code/hil-serl/outputs/bc/debug/20251021_180047/checkpoint_9990"
             ],
             "env": {
                 "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
@@ -33,19 +31,18 @@
             }
         },
         {
-            "name": "actor usb_pickup_insertion",
+            "name": "actor",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/train_rlpd.py",
             "console": "integratedTerminal",
             "args": [
-                "--exp_name=usb_pickup_insertion",
-                "--checkpoint_path=../../experiments/usb_pickup_insertion/plug4",
                 "--wandb_mode=offline",
-                "--wandb_output_dir=../../experiments/usb_pickup_insertion/wandb",
+                "--wandb_output_dir=outputs/debug/wandb",
                 "--actor",
                 "--port=5888",
                 "--debug",
+                "--bc_checkpoint_path=/home/facelesswei/code/hil-serl/outputs/bc/debug/20251021_180047/checkpoint_9990",
             ],
             "env": {
                 "XLA_PYTHON_CLIENT_PREALLOCATE": "false",

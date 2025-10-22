@@ -50,24 +50,28 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             train=False
         )
 
-    # def select_max_q(self, target_next_qs, obs, rng):
-    #     if self.bc_agent is None:
-    #         return target_next_qs
+    def select_max_q(self, target_next_qs, obs, rng):
+        if self.bc_agent is None:
+            return target_next_qs
 
-    #     bc_next_actions = self.bc_agent(obs["state"])
-    #     bc_target_next_qs = self.forward_target_critic(
-    #         obs,
-    #         bc_next_actions,
-    #         rng=rng,
-    #     )
-    #     bc_target_next_min_q = bc_target_next_qs.min(axis=0)
+        bc_next_actions = self.bc_agent.sample_actions(
+            observations=jax.device_put(obs),
+            seed=rng,
+            argmax=True,
+        )
+        bc_target_next_qs = self.forward_target_critic(
+            obs,
+            bc_next_actions[:, :3],
+            rng=rng,
+        )
+        bc_target_next_min_q = bc_target_next_qs.min(axis=0)
 
-    #     # select max q between sac and bc
-    #     select_idcs = bc_target_next_min_q > target_next_qs
-    #     chex.assert_shape(select_idcs, (target_next_qs.shape,))
-    #     selected_next_qs = jnp.where(select_idcs, bc_target_next_min_q, target_next_qs)
-    #     chex.assert_shape(selected_next_qs, (target_next_qs.shape,))
-    #     return selected_next_qs
+        # select max q between sac and bc
+        select_idcs = bc_target_next_min_q > target_next_qs
+        chex.assert_shape(select_idcs, (target_next_qs.shape,))
+        selected_next_qs = jnp.where(select_idcs, bc_target_next_min_q, target_next_qs)
+        chex.assert_shape(selected_next_qs, (target_next_qs.shape,))
+        return selected_next_qs
 
     def forward_critic(
         self,
@@ -234,9 +238,9 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         # Minimum Q across (subsampled) ensemble members
         target_next_min_q = target_next_qs.min(axis=0)
 
-        # target_next_min_q = self.select_max_q(
-        #     target_next_min_q, batch["next_observations"], rng
-        # )
+        target_next_min_q = self.select_max_q(
+            target_next_min_q, batch["next_observations"], rng
+        )
         chex.assert_shape(target_next_min_q, (batch_size,))
 
         target_q = (
