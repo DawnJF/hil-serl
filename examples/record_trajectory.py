@@ -167,7 +167,7 @@ def main():
     # 初始化环境
     assert exp_name in CONFIG_MAPPING, "Experiment folder not found."
     config = CONFIG_MAPPING[exp_name]()
-    env = config.get_environment(fake_env=False, save_video=False, classifier=False)
+    env = config.get_environment()
 
     # 创建保存目录
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
