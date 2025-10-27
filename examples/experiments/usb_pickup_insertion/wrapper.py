@@ -162,6 +162,7 @@ class HumanRewardEnv(gym.Wrapper):
         self.failure_key = False
         self.collision_key = False
         self.gripper_coverage_key = False
+        self.penalized_and_reset = False
 
         def on_press(key):
             try:
@@ -173,6 +174,8 @@ class HumanRewardEnv(gym.Wrapper):
                     self._set_collision()
                 elif key.char == ".":
                     self._set_gripper_coverage()
+                elif key.char == "m":
+                    self._set_penalized_and_reset()
             except AttributeError:
                 pass
 
@@ -199,6 +202,10 @@ class HumanRewardEnv(gym.Wrapper):
         print("\033[95m Gripper Coverage Key Pressed\033[0m")
         self.gripper_coverage_key = True
 
+    def _set_penalized_and_reset(self):
+        print("\033[96m penalized and reset\033[0m")
+        self.penalized_and_reset = True
+
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
 
@@ -222,6 +229,11 @@ class HumanRewardEnv(gym.Wrapper):
             reward = -0.1
             self.gripper_coverage_key = False
             done = False
+            info["succeed"] = reward
+        elif self.penalized_and_reset:
+            reward = -0.2
+            self.penalized_and_reset = False
+            done = True
             info["succeed"] = reward
         else:
             reward = 0.0 if int(reward) == 0 else reward
