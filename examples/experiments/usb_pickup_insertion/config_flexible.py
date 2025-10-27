@@ -131,48 +131,32 @@ class UREnvConfig(DefaultEnvConfig):
         }
     }
     IMAGE_CROP = {
-        "wrist": lambda img: img[20:330, 100:560],
-        "rgb": lambda img: img[280:510, 150:490],
-        "scene": lambda img: img[160:460, 100:560],
+        "wrist": lambda img: img[0:300, 0:640],
+        "rgb": lambda img: img[285:540, 280:640],
+        # "rgb": lambda img: img[300:420, 390:640],
+        "scene": lambda img: img[290:, 50:610] 
     }
     # TARGET_POSE = np.array(
     #     [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
     # )
     # reset_xyz = np.array([-0.35, -0.5, 0.15])
-    # For iphone
-    reset_xyz = np.array([
-        -0.5999861359596252,
-        -0.20111770927906036,
-        0.12716920274496078,
-    ])
+    reset_xyz = np.array([-0.6215623026557267, -0.34439493670229837, 0.15])
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
-    reset_quat = np.array([
-        0.9797053086774433,
-        0.20010938213011484,
-        0.010719838360479872,
-        0.004339170227621892
-    ])
-    RESET_POSE = np.array([*reset_xyz, *reset_quat])
-    ACTION_SCALE = np.array([0.003, 0.02, 1])  # xyz, euler, gripper
-    GRIPPER_OPEN_POSE = 170
-    GRIPPER_CLOSE_POSE = 205
-    GRIPPER_SPEED = 10
-    GRIPPER_FORCE = 10
-    RANDOM_RESET = True
-    # RANDOM_RESET = False
+    RESET_POSE = np.array([*reset_xyz, *reset_euler])
+    ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
+    # RANDOM_RESET = True
+    RANDOM_RESET = False
 
     RANDOM_XY_RANGE = 0.01
     RANDOM_RZ_RANGE = 0.1
-    # [-0.5, -0.2, 0.25]
-    # [-0.6, -0.6, 0.055]
     ABS_POSE_LIMIT_HIGH = np.concatenate(
-        [np.array([-0.35, -0.15, 0.15]), reset_euler + np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.3, -0.2, 0.25]), reset_euler + np.array([0.1, 0.1, 0.3])]
     )
     ABS_POSE_LIMIT_LOW = np.concatenate(
-        [np.array([-0.65, -0.55, 0.073]), reset_euler - np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.6, -0.6, 0.055]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
-    MAX_EPISODE_LENGTH = 300
-     
+    MAX_EPISODE_LENGTH = 200
+    
     # image transform configs
     TFS = {
         "brightness":{
@@ -236,12 +220,10 @@ class TrainConfig(DefaultTrainingConfig):
     encoder_type = "resnet-pretrained"
     setup_mode = "single-arm-learned-gripper"
 
-    def get_environment(self, fake_env=False, save_video=False, classifier=False, debug=False):
-        # env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
+    def get_environment(self, fake_env=False, save_video=False, debug=False):
         env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
         env = HumanRewardEnv(env)
-        if not fake_env:
-            env = SpacemouseIntervention(env)
+        env = SpacemouseIntervention(env)
         env = RelativeFrame(env, include_relative_pose=False)
         env = Quat2EulerWrapper(env)
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
@@ -276,7 +258,7 @@ def test_images():
         jax.tree_map = jax.tree.map
     if not hasattr(jax, "tree_leaves"):
         jax.tree_leaves = jax.tree.leaves
-    
+
     proprio_keys = ["tcp_pose", "gripper_pose"]
 
     env = UR_Platform_Env(fake_env=False, config=UREnvConfig())

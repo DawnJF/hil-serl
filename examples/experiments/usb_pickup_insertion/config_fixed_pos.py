@@ -26,12 +26,9 @@ from experiments.usb_pickup_insertion.wrapper import (
     HumanRewardEnv,
     USBEnv,
     GripperPenaltyWrapper,
-    ImageTransformWrapper,
+    ImageTransformWrapper
 )
-from experiments.usb_pickup_insertion.ur_wrapper import (
-    UR_Platform_Env,
-    Fake_UR_Platform_Env,
-)
+from experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 
 
 class EnvConfig(DefaultEnvConfig):
@@ -126,80 +123,63 @@ class UREnvConfig(DefaultEnvConfig):
         "rgb": {
             "dim": (1280, 720),
         },
-        "scene": {
-            "dim": (1280, 720)
-        }
+        # "scene": {
+        #     "dim": (1280, 720)
+        # }
     }
     IMAGE_CROP = {
-        "wrist": lambda img: img[20:330, 100:560],
-        "rgb": lambda img: img[280:510, 150:490],
-        "scene": lambda img: img[160:460, 100:560],
+        "wrist": lambda img: img[0:300, 0:640],
+        # "rgb": lambda img: img[285:540, 280:640],
+        "rgb": lambda img: img[300:420, 390:640],
+        # "scene": lambda img: img[290:, 50:610],
     }
     # TARGET_POSE = np.array(
     #     [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
     # )
-    # reset_xyz = np.array([-0.35, -0.5, 0.15])
-    # For iphone
-    reset_xyz = np.array([
-        -0.5999861359596252,
-        -0.20111770927906036,
-        0.12716920274496078,
-    ])
+    reset_xyz = np.array([-0.35, -0.5, 0.15])
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
-    reset_quat = np.array([
-        0.9797053086774433,
-        0.20010938213011484,
-        0.010719838360479872,
-        0.004339170227621892
-    ])
-    RESET_POSE = np.array([*reset_xyz, *reset_quat])
-    ACTION_SCALE = np.array([0.003, 0.02, 1])  # xyz, euler, gripper
-    GRIPPER_OPEN_POSE = 170
-    GRIPPER_CLOSE_POSE = 205
-    GRIPPER_SPEED = 10
-    GRIPPER_FORCE = 10
-    RANDOM_RESET = True
-    # RANDOM_RESET = False
+    RESET_POSE = np.array([*reset_xyz, *reset_euler])
+    ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
+    # RANDOM_RESET = True
+    RANDOM_RESET = False
 
     RANDOM_XY_RANGE = 0.01
     RANDOM_RZ_RANGE = 0.1
-    # [-0.5, -0.2, 0.25]
-    # [-0.6, -0.6, 0.055]
     ABS_POSE_LIMIT_HIGH = np.concatenate(
-        [np.array([-0.35, -0.15, 0.15]), reset_euler + np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.3, -0.2, 0.25]), reset_euler + np.array([0.1, 0.1, 0.3])]
     )
     ABS_POSE_LIMIT_LOW = np.concatenate(
-        [np.array([-0.65, -0.55, 0.073]), reset_euler - np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.6, -0.6, 0.055]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
-    MAX_EPISODE_LENGTH = 300
-     
+    MAX_EPISODE_LENGTH = 200
+    
     # image transform configs
     TFS = {
-        "brightness":{
-            "weight": 1.0,
-            "type": "ColorJitter",
-            "kwargs": {"brightness": [0.8, 1.2]}
-        },
-        "contrast": {
-            "weight": 1.0,
-            "type": "ColorJitter",
-            "kwargs": {"contrast": [0.8, 1.2]}
-        },
-        "saturation": {
-            "weight": 1.0,
-            "type": "ColorJitter",
-            "kwargs": {"saturation": [0.5, 1.5]}
-        },
-        "hue": {
-            "weight": 1.0,
-            "type": "ColorJitter",
-            "kwargs": {"hue": [-0.05, 0.05]}
-        },
-        "sharpness": {
-            "weight": 1.0,
-            "type": "SharpnessJitter",
-            "kwargs": {"sharpness": [0.5, 1.5]}
-        },
+        # "brightness":{
+        #     "weight": 1.0,
+        #     "type": "ColorJitter",
+        #     "kwargs": {"brightness": [0.8, 1.2]}
+        # },
+        # "contrast": {
+        #     "weight": 1.0,
+        #     "type": "ColorJitter",
+        #     "kwargs": {"contrast": [0.8, 1.2]}
+        # },
+        # "saturation": {
+        #     "weight": 1.0,
+        #     "type": "ColorJitter",
+        #     "kwargs": {"saturation": [0.5, 1.5]}
+        # },
+        # "hue": {
+        #     "weight": 1.0,
+        #     "type": "ColorJitter",
+        #     "kwargs": {"hue": [-0.05, 0.05]}
+        # },
+        # "sharpness": {
+        #     "weight": 1.0,
+        #     "type": "SharpnessJitter",
+        #     "kwargs": {"sharpness": [0.5, 1.5]}
+        # },
         "translation":{
             "weight": 1.0,
             "type": "RandomAffine",
@@ -215,15 +195,15 @@ class UREnvConfig(DefaultEnvConfig):
         #     }
         # }
     }
-    MAX_NUM_TRANSFORMS = 5  # maximum number of transforms to apply
+    MAX_NUM_TRANSFORMS = 1  # maximum number of transforms to apply
     ENABLE_TRANSFORMS = True  # whether to enable image transforms
     RANDOM_ORDER = True  # whether to apply transforms in random order
-    CAMERA_SECTIONS = ["wrist", "rgb", "scene"]
+    CAMERA_SECTIONS = ["wrist", "rgb"]
     PROBABILITY = 0.5  # probability to apply image transforms
 
 
 class TrainConfig(DefaultTrainingConfig):
-    image_keys = ["wrist", "rgb", "scene"]
+    image_keys = ["wrist", "rgb"]
     classifier_keys = ["side_classifier"]
     # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
     proprio_keys = ["tcp_pose", "gripper_pose"]
@@ -246,9 +226,21 @@ class TrainConfig(DefaultTrainingConfig):
         env = Quat2EulerWrapper(env)
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+        # if classifier:
+        #     classifier = load_classifier_func(
+        #         key=jax.random.PRNGKey(0),
+        #         sample=env.observation_space.sample(),
+        #         image_keys=self.classifier_keys,
+        #         checkpoint_path=os.path.abspath("classifier_ckpt/"),
+        #     )
+
+        #     def reward_func(obs):
+        #         sigmoid = lambda x: 1 / (1 + jnp.exp(-x))
+        #         return int(sigmoid(classifier(obs)) > 0.7 and obs["state"][0, 0] > 0.4)
+
         #     env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)
-        env = GripperPenaltyWrapper(env, penalty=-0.04)
-        env = ImageTransformWrapper(env, config=UREnvConfig())
+        env = GripperPenaltyWrapper(env, penalty=-0.02)
+        # env = ImageTransformWrapper(env, config=UREnvConfig())
         return env
 
 
@@ -271,7 +263,6 @@ def test_mouse():
 def test_images():
     from PIL import Image
     import jax
-
     if not hasattr(jax, "tree_map"):
         jax.tree_map = jax.tree.map
     if not hasattr(jax, "tree_leaves"):
@@ -285,7 +276,10 @@ def test_images():
     env = SERLObsWrapper(env, proprio_keys=proprio_keys)
     env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
     env = GripperPenaltyWrapper(env, penalty=-0.02)
-    env = ImageTransformWrapper(env, config=UREnvConfig())
+    env = ImageTransformWrapper(
+        env,
+        config=UREnvConfig()
+    )
     env.reset()
     action = env.action_space.sample()
     obs, reward, done, truncated, info = env.step(action)
@@ -302,15 +296,15 @@ def test_images():
     print("wrist_shape", wrist_shape)
     print("wrist_type", type(wrist))
 
-    scene = obs["scene"]
-    scene_shape = scene.shape
-    print("scene_shape", scene_shape)
-    print("scene_type", type(scene))
+    # scene = obs["scene"]
+    # scene_shape = scene.shape
+    # print("scene_shape", scene_shape)
+    # print("scene_type", type(scene))
 
     ##------ debug
     Image.fromarray(rgb.squeeze(0)).save("outputs/test_rgb/rgb.png")
     Image.fromarray(wrist.squeeze(0)).save("outputs/test_rgb/wrist.png")
-    Image.fromarray(scene.squeeze(0)).save("outputs/test_rgb/scene.png")
+    # Image.fromarray(scene.squeeze(0)).save("outputs/test_rgb/scene.png")
 
 
 def test_reward_model():

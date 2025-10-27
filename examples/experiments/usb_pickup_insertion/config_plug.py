@@ -34,89 +34,6 @@ from experiments.usb_pickup_insertion.ur_wrapper import (
 )
 
 
-class EnvConfig(DefaultEnvConfig):
-    SERVER_URL: str = "http://127.0.0.2:5000/"
-    REALSENSE_CAMERAS = {
-        "wrist_1": {
-            "serial_number": "127122270350",
-            "dim": (1280, 720),
-            "exposure": 10500,
-        },
-        "wrist_2": {
-            "serial_number": "127122270146",
-            "dim": (1280, 720),
-            "exposure": 10500,
-        },
-        "side_policy": {
-            "serial_number": "130322274175",
-            "dim": (1280, 720),
-            "exposure": 13000,
-        },
-        "side_classifier": {
-            "serial_number": "130322274175",
-            "dim": (1280, 720),
-            "exposure": 13000,
-        },
-    }
-    IMAGE_CROP = {
-        "wrist_1": lambda img: img[50:-200, 200:-200],
-        "wrist_2": lambda img: img[:-200, 200:-200],
-        "side_policy": lambda img: img[250:500, 350:650],
-        "side_classifier": lambda img: img[270:398, 500:628],
-    }
-    TARGET_POSE = np.array(
-        [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
-    )
-    RESET_POSE = TARGET_POSE + np.array([0, 0.03, 0.05, 0, 0, 0])
-    ACTION_SCALE = np.array([0.015, 0.1, 1])
-    RANDOM_RESET = True
-    DISPLAY_IMAGE = True
-    RANDOM_XY_RANGE = 0.01
-    RANDOM_RZ_RANGE = 0.1
-    ABS_POSE_LIMIT_HIGH = TARGET_POSE + np.array([0.03, 0.06, 0.05, 0.1, 0.1, 0.3])
-    ABS_POSE_LIMIT_LOW = TARGET_POSE - np.array([0.03, 0.01, 0.03, 0.1, 0.1, 0.3])
-    COMPLIANCE_PARAM = {
-        "translational_stiffness": 2000,
-        "translational_damping": 89,
-        "rotational_stiffness": 150,
-        "rotational_damping": 7,
-        "translational_Ki": 0,
-        "translational_clip_x": 0.006,
-        "translational_clip_y": 0.0059,
-        "translational_clip_z": 0.0035,
-        "translational_clip_neg_x": 0.005,
-        "translational_clip_neg_y": 0.005,
-        "translational_clip_neg_z": 0.0035,
-        "rotational_clip_x": 0.02,
-        "rotational_clip_y": 0.02,
-        "rotational_clip_z": 0.015,
-        "rotational_clip_neg_x": 0.02,
-        "rotational_clip_neg_y": 0.02,
-        "rotational_clip_neg_z": 0.015,
-        "rotational_Ki": 0,
-    }
-    PRECISION_PARAM = {
-        "translational_stiffness": 2000,
-        "translational_damping": 89,
-        "rotational_stiffness": 150,
-        "rotational_damping": 7,
-        "translational_Ki": 0.0,
-        "translational_clip_x": 0.01,
-        "translational_clip_y": 0.01,
-        "translational_clip_z": 0.01,
-        "translational_clip_neg_x": 0.01,
-        "translational_clip_neg_y": 0.01,
-        "translational_clip_neg_z": 0.01,
-        "rotational_clip_x": 0.03,
-        "rotational_clip_y": 0.03,
-        "rotational_clip_z": 0.03,
-        "rotational_clip_neg_x": 0.03,
-        "rotational_clip_neg_y": 0.03,
-        "rotational_clip_neg_z": 0.03,
-        "rotational_Ki": 0.0,
-    }
-    MAX_EPISODE_LENGTH = 120
-
 
 class UREnvConfig(DefaultEnvConfig):
     REALSENSE_CAMERAS = {
@@ -131,33 +48,33 @@ class UREnvConfig(DefaultEnvConfig):
         }
     }
     IMAGE_CROP = {
-        "wrist": lambda img: img[20:330, 100:560],
-        "rgb": lambda img: img[280:510, 150:490],
-        "scene": lambda img: img[160:460, 100:560],
+        "wrist": lambda img: img[60:350, 50:590],
+        "rgb": lambda img: img[250:510, 320:560],
+        "scene": lambda img: img[175:480, 0:640]
     }
     # TARGET_POSE = np.array(
     #     [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
     # )
     # reset_xyz = np.array([-0.35, -0.5, 0.15])
-    # For iphone
     reset_xyz = np.array([
-        -0.5999861359596252,
-        -0.20111770927906036,
-        0.12716920274496078,
+        -0.4961725175380707,
+        -0.27718037366867065,
+        0.18155656599998474
     ])
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
+    # For plug
     reset_quat = np.array([
-        0.9797053086774433,
-        0.20010938213011484,
-        0.010719838360479872,
-        0.004339170227621892
+        0.9824031954007385,
+        0.1864148915326869,
+        0.010644197470452267,
+        0.004488980004955199
     ])
     RESET_POSE = np.array([*reset_xyz, *reset_quat])
-    ACTION_SCALE = np.array([0.003, 0.02, 1])  # xyz, euler, gripper
-    GRIPPER_OPEN_POSE = 170
+    ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
+    GRIPPER_OPEN_POSE = 120
     GRIPPER_CLOSE_POSE = 205
-    GRIPPER_SPEED = 10
-    GRIPPER_FORCE = 10
+    GRIPPER_SPEED = 100
+    GRIPPER_FORCE = 100
     RANDOM_RESET = True
     # RANDOM_RESET = False
 
@@ -166,13 +83,13 @@ class UREnvConfig(DefaultEnvConfig):
     # [-0.5, -0.2, 0.25]
     # [-0.6, -0.6, 0.055]
     ABS_POSE_LIMIT_HIGH = np.concatenate(
-        [np.array([-0.35, -0.15, 0.15]), reset_euler + np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.35, -0.15, 0.20]), reset_euler + np.array([0.1, 0.1, 0.3])]
     )
     ABS_POSE_LIMIT_LOW = np.concatenate(
-        [np.array([-0.65, -0.55, 0.073]), reset_euler - np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.65, -0.55, 0.075]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
-    MAX_EPISODE_LENGTH = 300
-     
+    MAX_EPISODE_LENGTH = 120
+    
     # image transform configs
     TFS = {
         "brightness":{
