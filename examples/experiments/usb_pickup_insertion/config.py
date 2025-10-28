@@ -132,6 +132,22 @@ class UREnvConfig(DefaultEnvConfig):
     PROBABILITY = 0.5  # probability to apply image transforms
 
 
+class OpenSwitchEnvConfig(UREnvConfig):
+    reset_xyz = np.array([-0.621, -0.344, 0.15])
+    reset_quat = np.array(
+        [
+            0.9797053086774433,
+            0.20010938213011484,
+            0.010719838360479872,
+            0.004339170227621892,
+        ]
+    )
+    RESET_POSE = np.array([*reset_xyz, *reset_quat])
+    ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
+    GRIPPER_OPEN_POSE = 170
+    GRIPPER_CLOSE_POSE = 255
+
+
 class TrainConfig(DefaultTrainingConfig):
     image_keys = ["wrist", "rgb", "scene"]
     classifier_keys = ["side_classifier"]

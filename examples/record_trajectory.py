@@ -3,6 +3,7 @@
 
 import copy
 import os
+
 from tqdm import tqdm
 import numpy as np
 import pickle as pkl
@@ -12,6 +13,14 @@ import atexit
 
 from experiments.mappings import CONFIG_MAPPING
 
+import jax
+
+if not hasattr(jax, "tree_map"):
+    jax.tree_map = jax.tree.map
+if not hasattr(jax, "tree_leaves"):
+    jax.tree_leaves = jax.tree.leaves
+
+
 # 状态标记
 collecting = False  # 是否在采集轨迹
 start_collect = False
@@ -20,6 +29,7 @@ delete_last = False  # 按 d 删除上一次轨迹
 
 
 def on_press(key):
+    print("Key pressed:", key)
     global start_collect, stop_collect, delete_last
     try:
         if hasattr(key, "char"):
@@ -106,21 +116,6 @@ def collection_loop(env, save_dir, trajectories_needed):
         if "intervene_action" in info:
             actions = info["intervene_action"]
 
-        # 跳过无效动作
-        if (
-            not done
-            and not rew
-            and actions[0] == 0
-            and actions[1] == 0
-            and actions[2] == 0
-            and actions[3] == 0
-        ):
-            continue
-
-        # 创建transition
-        transition = create_transition(obs, actions, next_obs, rew, done, info)
-        obs = next_obs
-
         # 处理开始采集
         if start_collect:
             print("Start collecting new trajectory")
@@ -128,6 +123,7 @@ def collection_loop(env, save_dir, trajectories_needed):
                 print("!!! Already collecting, resetting trajectory")
             trajectory = []
             start_collect = False
+            collecting = True
 
         # 处理停止采集并保存
         if stop_collect and collecting and len(trajectory) > 0:
@@ -143,6 +139,21 @@ def collection_loop(env, save_dir, trajectories_needed):
             # 重置环境
             obs, info = env.reset()
             print("====================收集了一条数据")
+
+        # 跳过无效动作
+        if (
+            not done
+            and not rew
+            and actions[0] == 0
+            and actions[1] == 0
+            and actions[2] == 0
+            and actions[3] == 0
+        ):
+            continue
+
+        # 创建transition
+        transition = create_transition(obs, actions, next_obs, rew, done, info)
+        obs = next_obs
 
         if collecting:
             trajectory.append(transition)
@@ -175,11 +186,17 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # 开始数据收集
-    collection_loop(env, save_dir, exp_name, trajectories_needed)
+    print(
+        "===== Press 'a' to start collecting, 'b' to stop, 'd' to delete last trajectory ====="
+    )
+    collection_loop(env, save_dir, trajectories_needed)
 
     # 停止监听器
     listener.stop()
 
+
+if __name__ == "__main__":
+    main()
 
 """
 手动控制的轨迹收集

@@ -20,7 +20,7 @@ from PIL import Image
 sys.path.append(os.getcwd())
 sys.path.append("/home/facelesswei/code/hil-serl")
 sys.path.append("/home/facelesswei/code/hil-serl/examples")
-from examples.experiments.usb_pickup_insertion.config import EnvConfig, UREnvConfig
+from examples.experiments.usb_pickup_insertion.config import UREnvConfig
 from utils.tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
@@ -155,11 +155,11 @@ def test_dataset():
 
 
 def replay_dataset():
-    path = "/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-04/usb_pickup_insertion_2_11-44-07.pkl"
+    path = "datasets/trajectories/2025-10-27/traj_19-22-40_9.pkl"
 
     proprio_keys = ["tcp_pose", "gripper_pose"]
     env = UR_Platform_Env(config=UREnvConfig())
-    env = SpacemouseIntervention(env)
+    # env = SpacemouseIntervention(env)
     env = RelativeFrame(env)
     env = Quat2EulerWrapper(env)
     env = SERLObsWrapper(env, proprio_keys=proprio_keys)
@@ -172,7 +172,7 @@ def replay_dataset():
         transitions = pkl.load(f)
         print(transitions[0].keys())
 
-        for i in range(200):
+        for i in range(len(transitions)):
             print("==== step ", i, " ====")
             print(f"reward: {transitions[i]['rewards']}")
             print(f"done: {transitions[i]['dones']}")
@@ -187,6 +187,6 @@ def replay_dataset():
 
 if __name__ == "__main__":
 
-    test_Env()
+    # test_Env()
     # test_dataset()
-    # replay_dataset()
+    replay_dataset()
