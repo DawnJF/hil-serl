@@ -64,10 +64,12 @@ class EncoderWrapper(nn.Module):
 
 
 class BCActor(nn.Module):
-    def __init__(self):
+    def __init__(self, args):
         super().__init__()
-        image_num = 2
-        state_dim = 7
+        image_num = args.get("image_num", 2)
+        state_dim = args.get("state_dim", 7)
+        action_continue_dim = args.get("action_continue_dim", 3)
+        action_discrete_dim = args.get("action_discrete_dim", 3)
 
         self.encoder = EncoderWrapper(image_num=image_num, proprio_dim=state_dim)
 
@@ -80,8 +82,8 @@ class BCActor(nn.Module):
             nn.Linear(256, 256),
             nn.ReLU(),
         )
-        self.continue_head = nn.Linear(256, 3)  # 3 classes for continuous actions
-        self.discrete_head = nn.Linear(256, 3)  # 3 classes for discrete actions
+        self.continue_head = nn.Linear(256, action_continue_dim)
+        self.discrete_head = nn.Linear(256, action_discrete_dim)
 
     def forward(self, observations: dict[str, torch.Tensor]):
         x = self.encoder(observations)

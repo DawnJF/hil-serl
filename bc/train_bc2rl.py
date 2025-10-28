@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split
 from dataclasses import dataclass, field
 import numpy as np
 import logging
+import glob
 from tqdm import tqdm
 import tyro
 from torch.utils.tensorboard import SummaryWriter
@@ -29,12 +30,13 @@ class Args:
     model_path: str = None
 
     image_shape: int = 128
-    action_dim: int = 3 + 3  # xyz + gripper(open/close/keep)
+    action_continue_dim: int = 3  # xyz
+    action_discrete_dim: int = 3  # gripper(open/close/keep)
     image_num: int = 2  # 输入图像数量
-    state_dim: int = 7
+    state_dim: int = 28
 
     batch_size: int = 256
-    epochs: int = 80
+    epochs: int = 50
     learning_rate: float = 1e-4
     save_interval: int = 4
     resume_checkpoint: str = None
@@ -84,6 +86,18 @@ class ImagesActionDataset(Dataset):
         return observations, continue_label, gripper_label
 
 
+def process_trajectory_history(transitions, key, history_length):
+    shape = transitions[0][key].shape
+    # [history_length, ...]
+    history = np.zeros((history_length, *shape), dtype=transitions[0][key].dtype)
+    for transition in transitions:
+        # history[:history_len-1] + new
+        history = np.roll(history, shift=-1, axis=0)
+        history[-1] = transition[key]
+        transition[key] = history.flatten()
+    return transitions
+
+
 def load_and_split_data(args):
     mapping = {
         "observations:rgb": "image1",
@@ -95,50 +109,46 @@ def load_and_split_data(args):
     data_list = []
 
     # 定义要加载的文件列表
-    # data_files = [
-    #     "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl",
-    #     # classifier_data 子目录中的文件
-    #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12/*.pkl",
-    #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
-    #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-15/*.pkl",
-    # ]
-    data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
+    data_files = [
+        #     "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl",
+        #     # classifier_data 子目录中的文件
+        #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12/*.pkl",
+        #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
+        "datasets/trajectories/2025-10-27/*.pkl",
+    ]
+    # data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
 
     total_added = 0
+
+    def load_traj_file(file_path):
+        nonlocal total_added, data_list, mapping, args
+
+        file_data = load_pkl(file_path, mapping)
+        process_trajectory_history(file_data, "state", 4)
+        data_list.extend(file_data)
+        total_added += len(file_data)
+        logging.info(f"加载 {file_path}: {len(file_data)} 个样本")
 
     for file_pattern in data_files:
         # 处理通配符模式
         if "*" in file_pattern:
             # 使用 glob 查找匹配的文件
-            import glob
 
             matched_files = glob.glob(file_pattern)
-
             if not matched_files:
                 logging.warning(f"没有找到匹配的文件: {file_pattern}")
                 continue
 
             for file_path in matched_files:
-                try:
-                    file_data = load_pkl(file_path, mapping)
-                    data_list.extend(file_data)
-                    total_added += len(file_data)
-                    logging.info(f"加载 {file_path}: {len(file_data)} 个样本")
-                except Exception as e:
-                    logging.warning(f"跳过 {file_path}: {e}")
+                load_traj_file(file_path)
+
         else:
             # 处理单个文件
             if not os.path.exists(file_pattern):
                 logging.warning(f"文件不存在，跳过: {file_pattern}")
                 continue
 
-            try:
-                file_data = load_pkl(file_pattern, mapping)
-                data_list.extend(file_data)
-                total_added += len(file_data)
-                logging.info(f"加载 {file_pattern}: {len(file_data)} 个样本")
-            except Exception as e:
-                logging.warning(f"跳过 {file_pattern}: {e}")
+            load_traj_file(file_pattern)
 
     train_data, test_data = train_test_split(data_list)
 
@@ -172,7 +182,7 @@ def train(args: Args):
     train_dataloader, test_dataloader = load_and_split_data(args)
 
     # model = RLActor().to(device)
-    model = BCActor().to(device)
+    model = BCActor(args.__dict__).to(device)
 
     if args.resume_checkpoint:
         model.load_checkpoint(args.resume_checkpoint)
@@ -297,11 +307,15 @@ def train(args: Args):
 
 class ActorWrapper:
     def __init__(self, model_path):
+        args = Args()
         self.device = get_device()
-        self.model = RLActor().to(self.device)
+        self.model = BCActor(args.__dict__).to(self.device)
+        # self.model = RLActor().to(self.device)
         self.model.load_checkpoint(model_path)
         self.model.eval()
         self.image_transform = get_eval_transform()
+
+        self.history_state = np.zeros((4, 7), dtype=np.float32)
 
     def predict(self, obs, argmax=True):
         # 构造observations字典，匹配训练时的格式
@@ -310,6 +324,9 @@ class ActorWrapper:
             "rgb": obs["rgb"],
             "wrist": obs["wrist"],
         }
+        self.history_state = np.roll(self.history_state, shift=-1, axis=0)
+        self.history_state[-1] = obs["state"]
+        observations["state"] = self.history_state.flatten()
 
         observations = dict_data_to_torch(observations, self.image_transform)
 
@@ -318,15 +335,15 @@ class ActorWrapper:
             observations[key] = observations[key].to(self.device)
 
         with torch.no_grad():
-            action_dist, gripper = self.model(observations)
+            action_continue, gripper = self.model(observations)
 
-        # action_mean = action_dist.mean
-        # action_std = action_dist.stddev
-        # print(f"Action std: {action_std}")
-        if argmax:
-            np_action = action_dist.mode().cpu().numpy().squeeze()
+        if isinstance(action_continue, Distribution):
+            if argmax:
+                np_action = action_continue.mode().cpu().numpy().squeeze()
+            else:
+                np_action = action_continue.sample().cpu().numpy().squeeze()
         else:
-            np_action = action_dist.sample().cpu().numpy().squeeze()
+            np_action = action_continue.cpu().numpy().squeeze()
 
         np_gripper = gripper.cpu().numpy().squeeze()
 
@@ -336,6 +353,9 @@ class ActorWrapper:
         print(f"Predicted action: {np_action}")
 
         return np_action
+
+    def reset(self):
+        self.history_state = np.zeros((4, 7), dtype=np.float32)
 
 
 if __name__ == "__main__":
