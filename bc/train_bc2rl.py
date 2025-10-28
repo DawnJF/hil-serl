@@ -12,11 +12,13 @@ import logging
 from tqdm import tqdm
 import tyro
 from torch.utils.tensorboard import SummaryWriter
+from torch.distributions.distribution import Distribution
 
 sys.path.append(os.getcwd())
+from bc.net import RLActor, BCActor
 from reward_model.pkl_utils import load_pkl
 from utils.tools import get_device, logging_args, setup_logging
-from rl.net import Actor, DiscreteQCritic
+
 from rl.sac_policy import get_eval_transform, get_train_transform, dict_data_to_torch
 
 
@@ -40,40 +42,6 @@ class Args:
     discrete_weight: list = field(
         default_factory=lambda: [4.0, 1.0, 4.0]
     )  # gripper open/keep/close 权重
-    log_likelihood: bool = True
-
-
-class RLActor(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.c_actor = Actor(3)
-        self.d_actor = DiscreteQCritic(3)
-
-    def forward(self, batch):
-        # batch should be a dict with observations format
-        dist = self.c_actor(batch)
-
-        discrete_actions = self.d_actor(batch)
-
-        return dist, discrete_actions
-
-    def save_checkpoint(self, path):
-        torch.save(
-            {
-                "continue_actor": self.c_actor.state_dict(),
-                "discrete_actor": self.d_actor.state_dict(),
-            },
-            path,
-        )
-
-    def READ_CHECKPOINT(path):
-        checkpoint_dict = torch.load(path)
-        return checkpoint_dict["continue_actor"], checkpoint_dict["discrete_actor"]
-
-    def load_checkpoint(self, path):
-        c_dict, d_dict = RLActor.READ_CHECKPOINT(path)
-        self.c_actor.load_state_dict(c_dict)
-        self.d_actor.load_state_dict(d_dict)
 
 
 class ImagesActionDataset(Dataset):
@@ -127,14 +95,14 @@ def load_and_split_data(args):
     data_list = []
 
     # 定义要加载的文件列表
-    data_files = [
-        "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl",
-        # classifier_data 子目录中的文件
-        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12/*.pkl",
-        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
-        "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-15/*.pkl",
-    ]
-    # data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
+    # data_files = [
+    #     "/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_30_11-50-21.pkl",
+    #     # classifier_data 子目录中的文件
+    #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12/*.pkl",
+    #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
+    #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-15/*.pkl",
+    # ]
+    data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
 
     total_added = 0
 
@@ -203,7 +171,8 @@ def train(args: Args):
 
     train_dataloader, test_dataloader = load_and_split_data(args)
 
-    model = RLActor().to(device)
+    # model = RLActor().to(device)
+    model = BCActor().to(device)
 
     if args.resume_checkpoint:
         model.load_checkpoint(args.resume_checkpoint)
@@ -215,23 +184,23 @@ def train(args: Args):
     discrete_criterion = nn.CrossEntropyLoss(weight=weights)
 
     def compute_loss(observations, continue_label, discrete_label):
-        dist, pred_discrete = model(observations)  # 传入observations字典
-        if args.log_likelihood:
+        pred_continue, pred_discrete = model(observations)  # 传入observations字典
+        if isinstance(pred_continue, Distribution):
             # 将连续动作剪切到[-1,1]范围内，确保与TanhMultivariateNormalDiag分布兼容
             continue_label_clipped = torch.clamp(
                 continue_label, -1.0 + 1e-6, 1.0 - 1e-6
             )
 
             # 计算log_prob并使用mean而不是sum，避免梯度爆炸
-            log_probs = dist.log_prob(continue_label_clipped)
+            log_probs = pred_continue.log_prob(continue_label_clipped)
 
             # 概率密度可以 > 1，因此其对数可能 > 0
             # log_probs = torch.clamp(log_probs, min=-50.0, max=0.0)
 
             continue_loss = -log_probs.mean()
         else:
-            pred_continue = dist.mode()
             continue_loss = criterion(pred_continue, continue_label)
+
         discrete_loss = discrete_criterion(pred_discrete, discrete_label)  # gripper
 
         loss = continue_loss + discrete_loss

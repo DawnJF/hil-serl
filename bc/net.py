@@ -3,35 +3,7 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 
-
-class ImageEncoder(nn.Module):
-
-    def __init__(self, bottleneck_dim=256):
-        super().__init__()
-        # ResNet18 backbone
-        self.backbone = models.resnet18(pretrained=True)
-        self.backbone = nn.Sequential(
-            *list(self.backbone.children())[:-2]
-        )  # 去掉最后的FC层和平均池化层
-
-        # 全局平均池化
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(512, bottleneck_dim),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(bottleneck_dim, bottleneck_dim),
-            nn.ReLU(),
-        )
-
-    def forward(self, x):
-        # 输入: (B, C, H, W)
-        x = self.backbone(x)  # (B, 512, H/32, W/32)
-        x = self.global_pool(x)  # (B, 512, 1, 1)
-        x = x.view(x.size(0), -1)  # (B, 512)
-        x = self.mlp(x)  # (B, bottleneck_dim)
-        return x
+from rl.net import Actor, DiscreteQCritic, ImageEncoder
 
 
 class ProprioEncoder(nn.Module):
@@ -59,17 +31,21 @@ class EncoderWrapper(nn.Module):
             input_dim=proprio_dim, hidden_dim=64, output_dim=64
         )
 
-    def forward(self, state, imgs):
-        B, N, C, H, W = imgs.shape
+    def forward(self, observations):
+        state = observations["state"]  # 本体感受信息
+        image_rgb = observations["rgb"]
+        image_wrist = observations["wrist"]
+        images = torch.stack([image_rgb, image_wrist], dim=1)  # (B, N, C, H, W)
+
+        B, N, C, H, W = images.shape
         assert N == self.image_num, f"Expected {self.image_num} images, but got {N}"
 
         image_features = []
 
-        # Iterate over the N images for each batch in imgs
+        # Extract features from all images
         for i in range(N):
-            # Extract each image corresponding to the i-th image in the sequence
-            img = imgs[:, i, :, :, :]  # Shape: (B, C, H, W)
-            img_features = self.image_encoder(img)  # Pass through the image encoder
+            img = images[:, i, :, :, :]  # Shape: (B, C, H, W)
+            img_features = self.image_encoder(img)  # (B, 256)
             image_features.append(img_features)
 
         image_features = torch.cat(image_features, dim=1)  # Shape: (B, N * image_dim)
@@ -82,46 +58,20 @@ class EncoderWrapper(nn.Module):
 
         image1 = torch.zeros(1, self.image_num, 3, image_shape, image_shape)
         state = torch.zeros(1, self.proprio_dim)
-        return self.forward(state, image1).shape[1]
+
+        observations = {"state": state, "rgb": image1[:, 0], "wrist": image1[:, 1]}
+        return self.forward(observations).shape[1]
 
 
 class BCActor(nn.Module):
-    def __init__(self, args):
+    def __init__(self):
         super().__init__()
-        image_num = args.image_num
-        image_shape = args.image_shape
-        state_dim = args.state_dim
-        action_dim = args.action_dim
+        image_num = 2
+        state_dim = 7
 
         self.encoder = EncoderWrapper(image_num=image_num, proprio_dim=state_dim)
 
-        encode_dim = self.encoder.get_out_shape(image_shape)
-        logging.info(f"Encoder output dim: {encode_dim}")
-
-        self.actor = nn.Sequential(
-            nn.Linear(encode_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, action_dim),
-        )
-
-    def forward(self, state, imgs):
-        x = self.encoder(state, imgs)
-        return self.actor(x)
-
-
-class BCPolicyWithDiscrete(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        image_num = args.image_num
-        image_shape = args.image_shape
-        state_dim = args.state_dim
-        action_dim = args.action_dim
-
-        self.encoder = EncoderWrapper(image_num=image_num, proprio_dim=state_dim)
-
-        encode_dim = self.encoder.get_out_shape(image_shape)
+        encode_dim = self.encoder.get_out_shape()
         logging.info(f"Encoder output dim: {encode_dim}")
 
         self.actor = nn.Sequential(
@@ -133,9 +83,45 @@ class BCPolicyWithDiscrete(nn.Module):
         self.continue_head = nn.Linear(256, 3)  # 3 classes for continuous actions
         self.discrete_head = nn.Linear(256, 3)  # 3 classes for discrete actions
 
-    def forward(self, state, imgs):
-        x = self.encoder(state, imgs)
+    def forward(self, observations: dict[str, torch.Tensor]):
+        x = self.encoder(observations)
         features = self.actor(x)
-        continue_logits = self.continue_head(features)
+        continue_actions = self.continue_head(features)
         discrete_logits = self.discrete_head(features)
-        return continue_logits, discrete_logits
+        return continue_actions, discrete_logits
+
+    def save_checkpoint(self, path):
+        torch.save(self.state_dict(), path)
+
+
+class RLActor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.c_actor = Actor(3)
+        self.d_actor = DiscreteQCritic(3)
+
+    def forward(self, batch):
+        # batch should be a dict with observations format
+        dist = self.c_actor(batch)
+
+        discrete_actions = self.d_actor(batch)
+
+        return dist, discrete_actions
+
+    def save_checkpoint(self, path):
+        torch.save(
+            {
+                "continue_actor": self.c_actor.state_dict(),
+                "discrete_actor": self.d_actor.state_dict(),
+            },
+            path,
+        )
+
+    def READ_CHECKPOINT(path):
+        checkpoint_dict = torch.load(path)
+        return checkpoint_dict["continue_actor"], checkpoint_dict["discrete_actor"]
+
+    def load_checkpoint(self, path):
+        c_dict, d_dict = RLActor.READ_CHECKPOINT(path)
+        self.c_actor.load_state_dict(c_dict)
+        self.d_actor.load_state_dict(d_dict)
