@@ -3,6 +3,7 @@ import time
 import sys
 
 sys.path.append(os.getcwd())
+from examples.experiments.usb_pickup_insertion.config import OpenSwitchEnvConfig
 from examples.experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 from rl.envs_temp import (
     ChunkingWrapper,
@@ -19,11 +20,12 @@ from bc.train_bc2rl import ActorWrapper
 
 def test_Env():
 
-    ckpt_path = "outputs/bc2rl_20250928_173221/checkpoint-32.pth"
+    ckpt_path = "outputs/bc2rl/20251028_112543/checkpoint-40.pth"
     model = ActorWrapper(ckpt_path)
 
     proprio_keys = ["tcp_pose", "gripper_pose"]
-    config = UREnvConfig()
+    # config = UREnvConfig()
+    config = OpenSwitchEnvConfig()
     config.MAX_EPISODE_LENGTH = 1000
 
     env = UR_Platform_Env(config=config)

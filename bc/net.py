@@ -22,9 +22,9 @@ class ProprioEncoder(nn.Module):
 
 
 class EncoderWrapper(nn.Module):
-    def __init__(self, image_num, proprio_dim=16):
+    def __init__(self, image_keys, proprio_dim=16):
         super().__init__()
-        self.image_num = image_num
+        self.image_keys = image_keys
         self.proprio_dim = proprio_dim
         self.image_encoder = ImageEncoder(bottleneck_dim=512)
         self.proprio_encoder = ProprioEncoder(
@@ -33,12 +33,16 @@ class EncoderWrapper(nn.Module):
 
     def forward(self, observations):
         state = observations["state"]  # 本体感受信息
-        image_rgb = observations["rgb"]
-        image_wrist = observations["wrist"]
-        images = torch.stack([image_rgb, image_wrist], dim=1)  # (B, N, C, H, W)
+        image_list = []
+        for key in self.image_keys:
+            image_list.append(observations[key])
+
+        images = torch.stack(image_list, dim=1)  # (B, N, C, H, W)
 
         B, N, C, H, W = images.shape
-        assert N == self.image_num, f"Expected {self.image_num} images, but got {N}"
+        assert N == len(
+            self.image_keys
+        ), f"Expected {len(self.image_keys)} images, but got {N}"
 
         image_features = []
 
@@ -56,22 +60,25 @@ class EncoderWrapper(nn.Module):
     def get_out_shape(self, image_shape=128):
         """获取编码器输出的形状"""
 
-        image1 = torch.zeros(1, self.image_num, 3, image_shape, image_shape)
+        image = torch.zeros(1, 3, image_shape, image_shape)
         state = torch.zeros(1, self.proprio_dim)
 
-        observations = {"state": state, "rgb": image1[:, 0], "wrist": image1[:, 1]}
+        observations = {"state": state}
+        for i, key in enumerate(self.image_keys):
+            observations[key] = image
+
         return self.forward(observations).shape[1]
 
 
 class BCActor(nn.Module):
     def __init__(self, args):
         super().__init__()
-        image_num = args.get("image_num", 2)
         state_dim = args.get("state_dim", 7)
         action_continue_dim = args.get("action_continue_dim", 3)
         action_discrete_dim = args.get("action_discrete_dim", 3)
+        image_keys = args.get("image_keys", ["image1", "image2"])
 
-        self.encoder = EncoderWrapper(image_num=image_num, proprio_dim=state_dim)
+        self.encoder = EncoderWrapper(image_keys=image_keys, proprio_dim=state_dim)
 
         encode_dim = self.encoder.get_out_shape()
         logging.info(f"Encoder output dim: {encode_dim}")
@@ -94,6 +101,9 @@ class BCActor(nn.Module):
 
     def save_checkpoint(self, path):
         torch.save(self.state_dict(), path)
+
+    def load_checkpoint(self, path):
+        self.load_state_dict(torch.load(path))
 
 
 class RLActor(nn.Module):

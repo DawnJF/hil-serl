@@ -33,7 +33,8 @@ class Args:
     action_continue_dim: int = 3  # xyz
     action_discrete_dim: int = 3  # gripper(open/close/keep)
     image_num: int = 2  # 输入图像数量
-    state_dim: int = 28
+    state_dim: int = 7
+    image_keys: list = field(default_factory=lambda: ["image1", "image2", "image3"])
 
     batch_size: int = 256
     epochs: int = 50
@@ -62,13 +63,14 @@ class ImagesActionDataset(Dataset):
 
     def __getitem__(self, idx):
         # 构造observations字典，匹配模型期望的输入格式
-        rgb_img = self.data[idx]["image1"]
-        wrist_img = self.data[idx]["image2"]
-
-        state = self.data[idx]["state"]
 
         # 构造observations字典
-        observations = {"rgb": rgb_img, "wrist": wrist_img, "state": state}
+        observations = {
+            "image1": self.data[idx]["image1"],
+            "image2": self.data[idx]["image2"],
+            "image3": self.data[idx]["image3"],
+            "state": self.data[idx]["state"],
+        }
 
         action = self.data[idx]["actions"]
         continue_label = torch.tensor(action[:3], dtype=torch.float32)
@@ -86,7 +88,7 @@ class ImagesActionDataset(Dataset):
         return observations, continue_label, gripper_label
 
 
-def process_trajectory_history(transitions, key, history_length):
+def process_traj_state_history(transitions, key, history_length):
     shape = transitions[0][key].shape
     # [history_length, ...]
     history = np.zeros((history_length, *shape), dtype=transitions[0][key].dtype)
@@ -98,10 +100,26 @@ def process_trajectory_history(transitions, key, history_length):
     return transitions
 
 
+def process_traj_img_history(transitions, key):
+    shape = transitions[0][key].shape
+    # [history_length, ...]
+    history = np.zeros((10, *shape), dtype=transitions[0][key].dtype)
+    for transition in transitions:
+        # history[:history_len-1] + new
+        history = np.roll(history, shift=-1, axis=0)
+        history[-1] = transition[key]
+
+        transition["image1"] = history[0]
+        transition["image2"] = history[5]
+        transition["image3"] = history[-1]
+    return transitions
+
+
 def load_and_split_data(args):
     mapping = {
         "observations:rgb": "image1",
         "observations:wrist": "image2",
+        "observations:scene": "image3",
         "observations:state": "state",
         "actions": "actions",
     }
@@ -124,7 +142,7 @@ def load_and_split_data(args):
         nonlocal total_added, data_list, mapping, args
 
         file_data = load_pkl(file_path, mapping)
-        process_trajectory_history(file_data, "state", 4)
+        process_traj_img_history(file_data, "image3")
         data_list.extend(file_data)
         total_added += len(file_data)
         logging.info(f"加载 {file_path}: {len(file_data)} 个样本")
@@ -315,7 +333,8 @@ class ActorWrapper:
         self.model.eval()
         self.image_transform = get_eval_transform()
 
-        self.history_state = np.zeros((4, 7), dtype=np.float32)
+        # self.history_state = np.zeros((4, 1, 7), dtype=np.float32)
+        self.history_state = None
 
     def predict(self, obs, argmax=True):
         # 构造observations字典，匹配训练时的格式
@@ -324,9 +343,10 @@ class ActorWrapper:
             "rgb": obs["rgb"],
             "wrist": obs["wrist"],
         }
-        self.history_state = np.roll(self.history_state, shift=-1, axis=0)
-        self.history_state[-1] = obs["state"]
-        observations["state"] = self.history_state.flatten()
+        if self.history_state is not None:
+            self.history_state = np.roll(self.history_state, shift=-1, axis=0)
+            self.history_state[-1] = obs["state"]
+            observations["state"] = self.history_state.reshape(1, -1)
 
         observations = dict_data_to_torch(observations, self.image_transform)
 
