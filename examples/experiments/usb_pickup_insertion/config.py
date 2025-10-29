@@ -143,7 +143,7 @@ class OpenSwitchEnvConfig(UREnvConfig):
         ]
     )
     RESET_POSE = np.array([*reset_xyz, *reset_quat])
-    ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
+    ACTION_SCALE = np.array([0.01, 0.02, 1])  # xyz, euler, gripper
     GRIPPER_OPEN_POSE = 170
     GRIPPER_CLOSE_POSE = 255
 

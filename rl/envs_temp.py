@@ -6,12 +6,9 @@ import gymnasium as gym
 import numpy as np
 import numpy as np
 import copy
-import gymnasium as gym
 from gymnasium import Env, spaces
-import gymnasium as gym
 import numpy as np
 import time
-import copy
 from scipy.spatial.transform import Rotation as R
 from gymnasium.spaces import flatten_space, flatten
 

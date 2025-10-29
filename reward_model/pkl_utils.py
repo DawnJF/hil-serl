@@ -1,5 +1,6 @@
 import json
 import random
+import shutil
 import numpy as np
 import os
 from PIL import Image
@@ -60,14 +61,39 @@ def load_pkl(data_path, key_mapping):
     return transitions
 
 
-def test_load_pkl():
+def test_load_pkl(file):
     mapping = {
         "observations:rgb": "image1",
         "observations:wrist": "image2",
+        "observations:scene": "image3",
         "observations:state": "state",
         "actions": "actions",
     }
-    load_pkl("/Users/majianfei/Downloads/usb_pickup_insertion_30_11-50-21.pkl", mapping)
+    return load_pkl(file, mapping)
+
+
+def check_pkl_image():
+
+    shutil.rmtree("outputs/check_dataset", ignore_errors=True)
+
+    file = "datasets/trajectories/2025-10-27/traj_19-22-40_17.pkl"
+
+    data = test_load_pkl(file)
+    l = len(data)
+    print(l)
+    print(data[0].keys())
+
+    os.makedirs("outputs/check_dataset", exist_ok=True)
+
+    for i in range(l - 10, l):
+        image = Image.fromarray(data[i]["image1"].squeeze())
+        image.save(f"outputs/check_dataset/test_image1_{i}.png")
+
+        # image = Image.fromarray(data[i]["image2"].squeeze())
+        # image.save(f"outputs/check_dataset/test_image2_{i}.png")
+
+        image = Image.fromarray(data[i]["image3"].squeeze())
+        image.save(f"outputs/check_dataset/test_image3_{i}.png")
 
 
 def jax_process_trajectory(data_path):
@@ -143,5 +169,4 @@ def load_pkl_to_reward_model(path, test_size=0.3, random_state=42):
 
 
 if __name__ == "__main__":
-
-    test_load_pkl()
+    check_pkl_image()

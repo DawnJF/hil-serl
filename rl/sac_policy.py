@@ -795,7 +795,7 @@ def dict_data_to_torch(obj, image_transform, device=None):
     elif isinstance(obj, dict):
         d = {}
         for k, v in obj.items():
-            if k in ["rgb", "wrist"]:
+            if k in ["rgb", "wrist", "image1", "image2", "image3", "scene"]:
                 if len(v.shape) == 3:
                     v = v[np.newaxis, ...]  # Add batch dimension if missing
 
