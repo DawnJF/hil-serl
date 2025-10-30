@@ -5,7 +5,7 @@ from glob import glob
 
 def main():
 
-    folder_path = "/media/xiamu/d72c2cdf-d882-4de8-8a3c-298f7bf4be67/Downloads/new/data"
+    folder_path = "/home/facelesswei/code/hil-serl/datasets/trajectories/2025-10-29"
     pkl_files = sorted(glob(os.path.join(folder_path, "*.pkl")))
 
     if not pkl_files:
@@ -21,7 +21,8 @@ def main():
 
     print(f"总共合并 {len(pkl_files)} 个文件，步骤数量: {len(all_steps)}")
 
-    save_path = os.path.join(folder_path, "merged_data.pkl")
+    save_path = os.path.join(folder_path, "merged", "merged_data.pkl")
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     with open(save_path, "wb") as f:
         pickle.dump(all_steps, f)
 

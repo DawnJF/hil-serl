@@ -20,7 +20,11 @@ from PIL import Image
 sys.path.append(os.getcwd())
 sys.path.append("/home/facelesswei/code/hil-serl")
 sys.path.append("/home/facelesswei/code/hil-serl/examples")
-from examples.experiments.usb_pickup_insertion.config import UREnvConfig
+from examples.experiments.usb_pickup_insertion.config import (
+    OpenSwitchEnvConfig,
+    OpenSwitchTrainConfig,
+    UREnvConfig,
+)
 from utils.tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
@@ -155,10 +159,10 @@ def test_dataset():
 
 
 def replay_dataset():
-    path = "datasets/trajectories/2025-10-27/traj_19-22-40_9.pkl"
+    path = "datasets/trajectories/2025-10-27/traj_19-22-40_7.pkl"
 
     proprio_keys = ["tcp_pose", "gripper_pose"]
-    env = UR_Platform_Env(config=UREnvConfig())
+    env = UR_Platform_Env(config=OpenSwitchEnvConfig())
     # env = SpacemouseIntervention(env)
     env = RelativeFrame(env)
     env = Quat2EulerWrapper(env)
@@ -185,8 +189,20 @@ def replay_dataset():
                 break
 
 
+def test_train_config():
+    config = OpenSwitchTrainConfig()
+    env = config.get_environment()
+    env.reset()
+    action = env.action_space.sample()
+    action = np.zeros_like(action)
+    while True:
+
+        obs, reward, done, truncated, info = env.step(action)
+
+
 if __name__ == "__main__":
 
     # test_Env()
     # test_dataset()
-    replay_dataset()
+    # replay_dataset()
+    test_train_config()

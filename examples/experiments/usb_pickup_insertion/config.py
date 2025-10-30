@@ -133,7 +133,9 @@ class UREnvConfig(DefaultEnvConfig):
 
 
 class OpenSwitchEnvConfig(UREnvConfig):
-    reset_xyz = np.array([-0.621, -0.344, 0.15])
+    # RANDOM_RESET = False
+    # reset_xyz = np.array([-0.6, -0.28, 0.1])
+    reset_xyz = np.array([-0.55, -0.5, 0.14])
     reset_quat = np.array(
         [
             0.9797053086774433,
@@ -145,7 +147,39 @@ class OpenSwitchEnvConfig(UREnvConfig):
     RESET_POSE = np.array([*reset_xyz, *reset_quat])
     ACTION_SCALE = np.array([0.01, 0.02, 1])  # xyz, euler, gripper
     GRIPPER_OPEN_POSE = 170
-    GRIPPER_CLOSE_POSE = 255
+    GRIPPER_CLOSE_POSE = 212
+    MAX_EPISODE_LENGTH = 100
+
+
+class OpenSwitchTrainConfig(DefaultTrainingConfig):
+    # image_keys = ["wrist", "rgb", "scene"]
+    image_keys = ["rgb", "scene"]
+    classifier_keys = ["side_classifier"]
+    # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
+    proprio_keys = ["tcp_pose", "gripper_pose"]
+    checkpoint_period = 1000
+    cta_ratio = 2
+    random_steps = 0
+    discount = 0.98
+    buffer_period = 1000
+    encoder_type = "resnet-pretrained"
+    setup_mode = "single-arm-learned-gripper"
+
+    def get_environment(
+        self, fake_env=False, save_video=False, classifier=False, debug=False
+    ):
+        config = OpenSwitchEnvConfig()
+        # env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
+        env = UR_Platform_Env(fake_env=fake_env, config=config)
+        env = HumanRewardEnv(env)
+        env = SpacemouseIntervention(env)
+        env = RelativeFrame(env, include_relative_pose=False)
+        env = Quat2EulerWrapper(env)
+        env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
+        env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+        env = GripperPenaltyWrapper(env, penalty=-0.04)
+        env = ImageTransformWrapper(env, config)
+        return env
 
 
 class TrainConfig(DefaultTrainingConfig):
