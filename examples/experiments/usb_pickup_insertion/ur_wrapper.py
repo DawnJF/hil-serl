@@ -272,6 +272,24 @@ class UR_Platform_Env(gym.Env):
             )
         return ob, int(reward), done, False, {"succeed": reward}
 
+    def step_long(self, target: np.ndarray) -> tuple:
+        """standard gym step function."""
+
+        while np.linalg.norm(target - self.currpos[:3]) > 0.03:
+            diff = target - self.currpos[:3]
+
+            normal_diff = diff / np.linalg.norm(diff)
+            normal_diff *= 0.01
+            print(f"diff: :{np.linalg.norm(target - self.currpos[:3])}")
+            action = normal_diff + self.currpos[:3]
+            action = np.concatenate([action, self.currpos[3:]])
+            self._send_pos_command(action)
+            self._update_currpos()
+
+        observation, reward, terminated, truncated, info = self.step(np.zeros((7,)))
+
+        return observation, reward, True, True, info
+
     def get_im(self) -> Dict[str, np.ndarray]:
         """Get images from the realsense cameras."""
         images = {}
@@ -326,7 +344,7 @@ class UR_Platform_Env(gym.Env):
                 noise = np.random.normal(0, 0.01, 3)
                 arr[:3] += noise
             if self.gripper_open_pose:
-                arr = np.concatenate([arr, [self.gripper_open_pose]]) 
+                arr = np.concatenate([arr, [self.gripper_open_pose]])
             data = {"type": "jointreset", "arr": arr.tolist()}
             self.client.post(data)
             time.sleep(7)

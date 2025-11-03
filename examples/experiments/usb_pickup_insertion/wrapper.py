@@ -186,17 +186,17 @@ class HumanRewardEnv(gym.Wrapper):
         # Light Green font
         print("\033[92m Success Key Pressed\033[0m")
         self.success_key = True
-    
+
     def _set_failure(self):
         # light red font
         print("\033[91m Faliure Key Pressed\033[0m")
         self.failure_key = True
-    
+
     def _set_collision(self):
         # light yellow font
         print("\033[93m Collision Key Pressed\033[0m")
         self.collision_key = True
-    
+
     def _set_gripper_coverage(self):
         # light purple font
         print("\033[95m Gripper Coverage Key Pressed\033[0m")
@@ -239,6 +239,66 @@ class HumanRewardEnv(gym.Wrapper):
             reward = 0.0 if int(reward) == 0 else reward
 
         return obs, reward, done, truncated, info
+
+    def close(self):
+        if hasattr(self, "listener"):
+            self.listener.stop()
+        return self.env.close()
+
+
+class HumanControlTargetEnv(gym.Wrapper):
+    def __init__(self, env, info):
+        super().__init__(env)
+        self.info = info
+
+        t_key = "p" if info == "1" else "o"
+
+        from pynput import keyboard
+
+        self.next = False
+
+        def on_press(key):
+            print("on_press")
+            try:
+                if key.char == t_key:
+                    self._set_next()
+            except AttributeError:
+                pass
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+
+    def _set_next(self):
+        # Light Green font
+        print("\033[92m Next Key Pressed\033[0m")
+        self.next = True
+
+    def step(self, action):
+
+        # -0.39846227 -0.42275355  0.16
+        if self.next:
+            self.next = False
+            self.env._send_gripper_command(1)
+
+            if self.info == "1":
+                cur = self.env.currpos.copy()
+                cur[2] += 0.05
+                # self.env.step_long(np.array([-0.4, -0.4, 0.18]))
+                self.env.step_long(cur[:3])
+
+                return self.env.step_long(
+                    np.array(
+                        [-0.5999861359596252, -0.20111770927906036, 0.12716920274496078]
+                    )
+                )
+            elif self.info == "2":
+                cur = self.env.currpos.copy()
+                cur[2] += 0.05
+                self.env.step_long(cur[:3])
+
+                return self.env.step_long(np.array([-0.55, -0.5, 0.14]))
+
+        return self.env.step(action)
 
     def close(self):
         if hasattr(self, "listener"):
@@ -377,11 +437,7 @@ class RandomSubsetApply(Transform):
 
 
 class ImageTransformWrapper(gym.ObservationWrapper):
-    def __init__(
-        self,
-        env,
-        config: DefaultEnvConfig = None
-    ):
+    def __init__(self, env, config: DefaultEnvConfig = None):
         super().__init__(env)
         self.tfs = config.TFS
         self.max_num_transforms = config.MAX_NUM_TRANSFORMS
