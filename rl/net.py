@@ -9,6 +9,8 @@ import torch
 from torch import nn
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
+from bc.net import EncoderWrapper
+
 
 class SpatialLearnedEmbeddings(nn.Module):
     def __init__(self, height, width, channel, num_features=8):
@@ -116,47 +118,6 @@ class ProprioEncoder(nn.Module):
 
     def forward(self, state):
         return self.encoder(state)
-
-
-class EncoderWrapper(nn.Module):
-    def __init__(self, image_num, proprio_dim=7):
-        super().__init__()
-        self.image_num = image_num
-        self.proprio_dim = proprio_dim
-
-        self.image_encoder = ImageEncoder(bottleneck_dim=256)
-        self.proprio_encoder = ProprioEncoder(input_dim=proprio_dim, output_dim=64)
-
-    def forward(self, observations):
-        state = observations["state"]  # 本体感受信息
-        image_rgb = observations["rgb"]
-        image_wrist = observations["wrist"]
-        images = torch.stack([image_rgb, image_wrist], dim=1)  # (B, N, C, H, W)
-
-        B, N, C, H, W = images.shape
-        assert N == self.image_num, f"Expected {self.image_num} images, but got {N}"
-
-        image_features = []
-
-        # Extract features from all images
-        for i in range(N):
-            img = images[:, i, :, :, :]  # Shape: (B, C, H, W)
-            img_features = self.image_encoder(img)  # (B, 256)
-            image_features.append(img_features)
-
-        image_features = torch.cat(image_features, dim=1)  # Shape: (B, N * image_dim)
-
-        state_features = self.proprio_encoder(state)
-        return torch.cat([image_features, state_features], dim=-1)
-
-    def get_out_shape(self, image_shape=128):
-        """获取编码器输出的形状"""
-
-        image1 = torch.zeros(1, self.image_num, 3, image_shape, image_shape)
-        state = torch.zeros(1, self.proprio_dim)
-
-        observations = {"state": state, "rgb": image1[:, 0], "wrist": image1[:, 1]}
-        return self.forward(observations).shape[1]
 
 
 class TanhMultivariateNormalDiag(TransformedDistribution):

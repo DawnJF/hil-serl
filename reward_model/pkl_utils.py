@@ -76,7 +76,7 @@ def check_pkl_image():
 
     shutil.rmtree("outputs/check_dataset", ignore_errors=True)
 
-    file = "datasets/trajectories/2025-10-27/traj_19-22-40_17.pkl"
+    file = "datasets/trajectories/2025-10-29/traj_14-09-49_15.pkl"
 
     data = test_load_pkl(file)
     l = len(data)
@@ -85,12 +85,12 @@ def check_pkl_image():
 
     os.makedirs("outputs/check_dataset", exist_ok=True)
 
-    for i in range(l - 10, l):
+    for i in range(l - 40, l):
         image = Image.fromarray(data[i]["image1"].squeeze())
         image.save(f"outputs/check_dataset/test_image1_{i}.png")
 
-        # image = Image.fromarray(data[i]["image2"].squeeze())
-        # image.save(f"outputs/check_dataset/test_image2_{i}.png")
+        image = Image.fromarray(data[i]["image2"].squeeze())
+        image.save(f"outputs/check_dataset/test_image2_{i}.png")
 
         image = Image.fromarray(data[i]["image3"].squeeze())
         image.save(f"outputs/check_dataset/test_image3_{i}.png")
