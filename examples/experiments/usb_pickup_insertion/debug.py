@@ -28,7 +28,11 @@ from examples.experiments.usb_pickup_insertion.config import (
 from utils.tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
-from experiments.usb_pickup_insertion.wrapper import USBEnv, GripperPenaltyWrapper
+from experiments.usb_pickup_insertion.wrapper import (
+    HumanControlTargetEnv,
+    USBEnv,
+    GripperPenaltyWrapper,
+)
 from experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 
 if not hasattr(jax, "tree_map"):
@@ -41,7 +45,7 @@ def test_Env():
     proprio_keys = ["tcp_pose", "gripper_pose"]
 
     # env = FakeFrankaEnv(config=EnvConfig())
-    env = UR_Platform_Env(config=UREnvConfig())
+    env = UR_Platform_Env(config=OpenSwitchEnvConfig())
     env = SpacemouseIntervention(env)
     env = RelativeFrame(env)
     env = Quat2EulerWrapper(env)
@@ -190,8 +194,19 @@ def replay_dataset():
 
 
 def test_train_config():
-    config = OpenSwitchTrainConfig()
-    env = config.get_environment()
+    proprio_keys = ["tcp_pose", "gripper_pose"]
+    # config = OpenSwitchTrainConfig()
+    # env = config.get_environment()
+
+    env = UR_Platform_Env(config=OpenSwitchEnvConfig())
+    env = HumanControlTargetEnv(env, None)
+    env = SpacemouseIntervention(env)
+    env = RelativeFrame(env, include_relative_pose=False)
+    env = Quat2EulerWrapper(env)
+    env = SERLObsWrapper(env, proprio_keys=proprio_keys)
+    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
+    env = GripperPenaltyWrapper(env, penalty=-0.04)
+
     env.reset()
     action = env.action_space.sample()
     action = np.zeros_like(action)
