@@ -72,9 +72,9 @@ class UREnvConfig(DefaultEnvConfig):
     RESET_POSE = np.array([*reset_xyz, *reset_quat])
     ACTION_SCALE = np.array([0.006, 0.02, 1])  # xyz, euler, gripper
     GRIPPER_OPEN_POSE = 120
-    GRIPPER_CLOSE_POSE = 205
-    GRIPPER_SPEED = 100
-    GRIPPER_FORCE = 100
+    GRIPPER_CLOSE_POSE = 190
+    GRIPPER_SPEED = 30
+    GRIPPER_FORCE = 180
     RANDOM_RESET = True
     # RANDOM_RESET = False
 
@@ -88,7 +88,7 @@ class UREnvConfig(DefaultEnvConfig):
     ABS_POSE_LIMIT_LOW = np.concatenate(
         [np.array([-0.65, -0.55, 0.075]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
-    MAX_EPISODE_LENGTH = 120
+    MAX_EPISODE_LENGTH = 250
     
     # image transform configs
     TFS = {

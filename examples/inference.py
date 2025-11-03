@@ -57,6 +57,15 @@ flags.DEFINE_boolean(
 
 flags.DEFINE_string("wandb_mode", "online", "wandb mode, online or offline, if debug is true, mode is disabled.")
 
+# for optimizer config
+flags.DEFINE_float("learning_rate", 3e-4, "learning rate")
+flags.DEFINE_integer("warmup_steps", 0, "warm-up steps")
+flags.DEFINE_integer("cosine_decay_steps", None, "cosing decay steps")
+flags.DEFINE_float("weight_decay", None, "weight decay for adamw")
+flags.DEFINE_float("clip_grad_norm", None, "clip grad norm intensity")
+flags.DEFINE_boolean("return_lr_schedule", False, "if return lr schedule")
+
+
 devices = jax.local_devices()
 num_devices = len(devices)
 sharding = jax.sharding.PositionalSharding(devices)
@@ -145,6 +154,14 @@ def main(_):
             image_keys=config.image_keys,
             encoder_type=config.encoder_type,
             discount=config.discount,
+            optimizer_configs={
+                "learning_rate": FLAGS.learning_rate,
+                "warmup_steps": FLAGS.warmup_steps,
+                "cosine_decay_steps": FLAGS.cosine_decay_steps,
+                "weight_decay": FLAGS.weight_decay,
+                "clip_grad_norm": FLAGS.clip_grad_norm,
+                "return_lr_schedule": FLAGS.return_lr_schedule
+            }
         )
         include_grasp_penalty = True
     elif config.setup_mode == 'dual-arm-learned-gripper':

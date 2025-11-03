@@ -279,7 +279,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         batch_size = batch["rewards"].shape[0]
         grasp_action = jnp.round(batch["actions"][..., -1]).astype(jnp.int16) + 1 # Cast env action from [-1, 1] to {0, 1, 2}
 
-        # Evaluate next grasp Qs for all ensemble members (cheap because we're only doing the forward pass)
+         # Evaluate next grasp Qs for all ensemble members (cheap because we're only doing the forward pass)
         target_next_grasp_qs = self.forward_target_grasp_critic(
             batch["next_observations"],
             rng=rng,
@@ -530,17 +530,12 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
 
         # Define optimizers
         # set optimizers' params
-        if_schedule_lr = kwargs.get("if_schedule_lr", False)
-        if if_schedule_lr:
-            max_steps = kwargs.get("max_steps", 100000)
-            additional_kwargs = {
-                "warmup_steps": max_steps * 0.5 / 100,
-                "cosine_decay_steps": max_steps,
-            }
-            actor_optimizer_kwargs.update(additional_kwargs)
-            critic_optimizer_kwargs.update(additional_kwargs)
-            grasp_critic_optimizer_kwargs.update(additional_kwargs)
-            temperature_optimizer_kwargs.update(additional_kwargs)
+        optimizer_configs = kwargs.get("optimizer_configs", None)
+        assert optimizer_configs != None, "optimizer_configs cannot be None."
+        actor_optimizer_kwargs.update(optimizer_configs)
+        critic_optimizer_kwargs.update(optimizer_configs)
+        grasp_critic_optimizer_kwargs.update(optimizer_configs)
+        temperature_optimizer_kwargs.update(optimizer_configs)
         txs = {
             "actor": make_optimizer(**actor_optimizer_kwargs),
             "critic": make_optimizer(**critic_optimizer_kwargs),

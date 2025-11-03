@@ -5,6 +5,14 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
             "name": "Python Debugger: Current File with Arguments",
             "type": "debugpy",
             "request": "launch",
@@ -19,11 +27,13 @@
             "program": "${workspaceFolder}/examples/train_rlpd.py",
             "console": "integratedTerminal",
             "args": [
-                "--demo_path=/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-09-09/usb_pickup_insertion_5_11-05-02.pkl",
+                "--exp_name=plug_into_socket_with_power_cord",
+                "--checkpoint_path=/home/facelesswei/code/hil-serl-zbh/examples/experiments/usb_pickup_insertion/plug_with_power_cord2",
+                "--demo_path=/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-10-27/usb_pickup_insertion_31_18-18-00.pkl",
                 "--learner",
-                "--debug",
-                "--port=5888",
-                "--bc_checkpoint_path=/home/facelesswei/code/hil-serl/outputs/bc/debug/20251021_180047/checkpoint_9990"
+                // "--debug",
+                // "--port=5588",
+                // "--checkpoint_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl"
             ],
             "env": {
                 "XLA_PYTHON_CLIENT_PREALLOCATE": "false",

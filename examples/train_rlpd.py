@@ -69,6 +69,14 @@ flags.DEFINE_string(
 )
 flags.DEFINE_string("wandb_output_dir", None, "wandb output dir")
 
+# for optimizer config
+flags.DEFINE_float("learning_rate", 3e-4, "learning rate")
+flags.DEFINE_integer("warmup_steps", 0, "warm-up steps")
+flags.DEFINE_integer("cosine_decay_steps", None, "cosing decay steps")
+flags.DEFINE_float("weight_decay", None, "weight decay for adamw")
+flags.DEFINE_float("clip_grad_norm", None, "clip grad norm intensity")
+flags.DEFINE_boolean("return_lr_schedule", False, "if return lr schedule")
+
 devices = jax.local_devices()
 num_devices = len(devices)
 sharding = jax.sharding.PositionalSharding(devices)
@@ -314,9 +322,7 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
         train_networks_to_update = frozenset({"critic", "actor", "temperature"})
     else:
         train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
-        train_networks_to_update = frozenset(
-            {"critic", "grasp_critic", "actor", "temperature"}
-        )
+        train_networks_to_update = frozenset({"critic", "grasp_critic", "actor", "temperature"})
 
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
@@ -381,8 +387,6 @@ def main(_):
         debug=FLAGS.debug,
     )
     env = RecordEpisodeStatistics(env)
-    print_green(f"observation_space: {env.observation_space}")
-    print_green(f"action_space: {env.action_space}")
 
     rng, sampling_rng = jax.random.split(rng)
 
@@ -414,9 +418,14 @@ def main(_):
             image_keys=config.image_keys,
             encoder_type=config.encoder_type,
             discount=config.discount,
-            # max_steps=config.max_steps,
-            # if_schedule_lr=True,
-            bc_agent=bc_agent,
+            optimizer_configs={
+                "learning_rate": FLAGS.learning_rate,
+                "warmup_steps": FLAGS.warmup_steps,
+                "cosine_decay_steps": FLAGS.cosine_decay_steps,
+                "weight_decay": FLAGS.weight_decay,
+                "clip_grad_norm": FLAGS.clip_grad_norm,
+                "return_lr_schedule": FLAGS.return_lr_schedule
+            }
         )
         include_grasp_penalty = True
     elif config.setup_mode == "dual-arm-learned-gripper":
@@ -434,7 +443,9 @@ def main(_):
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
-    agent = jax.device_put(jax.tree_map(jnp.array, agent), sharding.replicate())
+    agent = jax.device_put(
+        jax.tree_map(jnp.array, agent), sharding.replicate()
+    )
 
     if FLAGS.checkpoint_path is not None and os.path.exists(FLAGS.checkpoint_path):
         input(
