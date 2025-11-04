@@ -7,117 +7,8 @@ from torch.distributions import (
 )
 import torch
 from torch import nn
-from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
-from bc.net import EncoderWrapper
-
-
-class SpatialLearnedEmbeddings(nn.Module):
-    def __init__(self, height, width, channel, num_features=8):
-        """
-        PyTorch implementation of learned spatial embeddings
-
-        Args:
-            height: Spatial height of input features
-            width: Spatial width of input features
-            channel: Number of input channels
-            num_features: Number of output embedding dimensions
-        """
-        super().__init__()
-        self.height = height
-        self.width = width
-        self.channel = channel
-        self.num_features = num_features
-
-        self.kernel = nn.Parameter(torch.empty(channel, height, width, num_features))
-
-        nn.init.kaiming_normal_(self.kernel, mode="fan_in", nonlinearity="linear")
-
-    def forward(self, features):
-        """
-        Forward pass for spatial embedding
-
-        Args:
-            features: Input tensor of shape [B, C, H, W] where B is batch size,
-                     C is number of channels, H is height, and W is width
-        Returns:
-            Output tensor of shape [B, C*F] where F is the number of features
-        """
-
-        features_expanded = features.unsqueeze(-1)  # [B, C, H, W, 1]
-        kernel_expanded = self.kernel.unsqueeze(0)  # [1, C, H, W, F]
-
-        # Element-wise multiplication and spatial reduction
-        output = (features_expanded * kernel_expanded).sum(
-            dim=(2, 3)
-        )  # Sum over H,W dimensions
-
-        # Reshape to combine channel and feature dimensions
-        output = output.view(output.size(0), -1)  # [B, C*F]
-
-        return output
-
-
-class ImageEncoder(nn.Module):
-    """Smart pretrained encoder with efficient parameter usage"""
-
-    def __init__(self, bottleneck_dim=256, freeze_backbone=True, num_features=4):
-        super().__init__()
-        # Use EfficientNet-B0 as backbone (much lighter than ResNet18 but better performance)
-
-        self.backbone = efficientnet_b0(
-            weights=EfficientNet_B0_Weights.IMAGENET1K_V1
-        ).features[:-3]
-
-        # TODO
-        output_shape = self.backbone(torch.zeros(1, 3, 128, 128)).shape
-        logging.info(f"ImageEncoder Backbone output shape: {output_shape}")
-
-        # Freeze backbone parameters if requested (similar to JAX frozen encoder)
-        if freeze_backbone:
-            for param in self.backbone.parameters():
-                param.requires_grad = False
-            logging.info(
-                f"ImageEncoder Froze {sum(p.numel() for p in self.backbone.parameters())} backbone parameters"
-            )
-
-        self.spatial_embeddings = SpatialLearnedEmbeddings(
-            height=output_shape[2],
-            width=output_shape[3],
-            channel=output_shape[1],
-            num_features=num_features,
-        )
-
-        # Efficient feature projection with residual connection
-        self.feature_proj = nn.Sequential(
-            nn.Dropout(0.1),
-            nn.Linear(output_shape[1] * num_features, 512),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(512, bottleneck_dim),
-            nn.LayerNorm(bottleneck_dim),
-            nn.Tanh(),
-        )
-
-    def forward(self, x):
-        # 输入: (B, C, H, W)
-        x = self.backbone(x)
-        x = self.spatial_embeddings(x)
-        x = self.feature_proj(x)
-        return x
-
-
-class ProprioEncoder(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, output_dim),
-            nn.LayerNorm(output_dim),
-            nn.Tanh(),
-        )
-
-    def forward(self, state):
-        return self.encoder(state)
+from torch.encoder import EncoderWrapper
 
 
 class TanhMultivariateNormalDiag(TransformedDistribution):
@@ -141,12 +32,13 @@ class Actor(nn.Module):
     def __init__(
         self,
         action_dim: int,
+        image_keys: list[str],
         std_min: float = 1e-05,
         std_max: float = 5,
     ):
         super().__init__()
 
-        self.encoder = EncoderWrapper(image_num=2, proprio_dim=7)
+        self.encoder = EncoderWrapper(image_keys, proprio_dim=7)
         self.action_dim = action_dim
         self.std_min = std_min
         self.std_max = std_max
@@ -250,9 +142,9 @@ class Critic(nn.Module):
 class DiscreteQCritic(nn.Module):
     """Discrete Q-value critic for discrete actions (like grasp/no-grasp)"""
 
-    def __init__(self, num_discrete_actions=2):
+    def __init__(self, num_discrete_actions, image_keys: list[str]):
         super().__init__()
-        self.encoder = EncoderWrapper(image_num=2, proprio_dim=7)
+        self.encoder = EncoderWrapper(image_keys, proprio_dim=7)
         self.num_discrete_actions = num_discrete_actions
 
         # 使用简化的Dueling网络架构
@@ -288,9 +180,3 @@ class DiscreteQCritic(nn.Module):
         q_values = value + advantage - advantage_mean
 
         return q_values
-
-
-if __name__ == "__main__":
-    # 简单测试
-    i = ImageEncoder()
-    print(i)

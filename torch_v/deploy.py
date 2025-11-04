@@ -8,7 +8,7 @@ sys.path.append(os.getcwd())
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "examples")))
 from examples.experiments.mappings import CONFIG_MAPPING
 from utils.tools import print_dict_structure
-from bc.train_bc2rl import ActorWrapper
+from torch_v.train_bc2rl import ActorWrapper
 
 
 def test_Env():

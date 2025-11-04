@@ -6,7 +6,12 @@ import torch
 
 sys.path.append(os.getcwd())
 from rl.envs_temp import get_environment
-from rl.sac_policy import SACConfig, SACPolicy, dict_data_to_torch, get_eval_transform
+from torch_v.sac_policy import (
+    SACConfig,
+    SACPolicy,
+    dict_data_to_torch,
+    get_eval_transform,
+)
 
 
 def main():

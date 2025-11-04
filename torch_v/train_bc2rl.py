@@ -16,11 +16,15 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.distributions.distribution import Distribution
 
 sys.path.append(os.getcwd())
-from bc.net import RLActor, BCActor
+from torch_v.net import RLActor, BCActor
 from reward_model.pkl_utils import load_pkl
 from utils.tools import get_device, logging_args, setup_logging
 
-from rl.sac_policy import get_eval_transform, get_train_transform, dict_data_to_torch
+from torch_v.sac_policy import (
+    get_eval_transform,
+    get_train_transform,
+    dict_data_to_torch,
+)
 
 
 @dataclass

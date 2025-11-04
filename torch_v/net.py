@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 
-from bc.encoder import EncoderWrapper
-from rl.net import Actor, DiscreteQCritic
+from torch_v.encoder import EncoderWrapper
+from torch_v.sac import Actor, DiscreteQCritic
 
 
 class BCActor(nn.Module):

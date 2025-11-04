@@ -16,12 +16,12 @@ from agentlace.trainer import TrainerServer, TrainerClient, TrainerConfig
 from agentlace.data.data_store import QueuedDataStore
 
 sys.path.append(os.getcwd())
-from bc.train_bc2rl import RLActor
+from torch_v.train_bc2rl import RLActor
 from serl_launcher.serl_launcher.utils.logging_utils import RecordEpisodeStatistics
 from serl_launcher.serl_launcher.utils.timer_utils import Timer
 from rl.envs_temp import get_environment, get_fake_environment
-from rl.replay_buffer_data_store import ReplayBufferDataStore
-from rl.sac_policy import (
+from torch_v.replay_buffer_data_store import ReplayBufferDataStore
+from torch_v.sac_policy import (
     SACPolicy,
     SACConfig,
     dict_data_to_torch,

@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 import tyro
 
 sys.path.append(os.getcwd())
-from rl.net import Actor, Critic, DiscreteQCritic
-from rl.replay_buffer_data_store import ReplayBufferDataStore
+from torch_v.sac import Actor, Critic, DiscreteQCritic
+from torch_v.replay_buffer_data_store import ReplayBufferDataStore
 import torchvision.transforms.v2 as v2
 from utils.tools import get_device
 
