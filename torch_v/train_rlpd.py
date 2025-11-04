@@ -19,7 +19,7 @@ sys.path.append(os.getcwd())
 from torch_v.train_bc2rl import RLActor
 from serl_launcher.serl_launcher.utils.logging_utils import RecordEpisodeStatistics
 from serl_launcher.serl_launcher.utils.timer_utils import Timer
-from rl.envs_temp import get_environment, get_fake_environment
+from rl.envs_store import get_environment, get_fake_environment
 from torch_v.replay_buffer_data_store import ReplayBufferDataStore
 from torch_v.sac_policy import (
     SACPolicy,

@@ -5,7 +5,7 @@ import torch
 
 
 sys.path.append(os.getcwd())
-from rl.envs_temp import get_environment
+from rl.envs_store import get_environment
 from torch_v.sac_policy import (
     SACConfig,
     SACPolicy,

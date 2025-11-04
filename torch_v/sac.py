@@ -8,7 +8,7 @@ from torch.distributions import (
 import torch
 from torch import nn
 
-from torch.encoder import EncoderWrapper
+from torch_v.encoder import EncoderWrapper
 
 
 class TanhMultivariateNormalDiag(TransformedDistribution):
