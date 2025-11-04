@@ -55,7 +55,7 @@ def multiple_action_q_function(forward):
 class Critic(nn.Module):
     encoder: Optional[nn.Module]
     network: nn.Module
-    init_final: Optional[float] = None
+    output_dim: Optional[int] = 1
 
     @nn.compact
     @multiple_action_q_function
@@ -69,13 +69,8 @@ class Critic(nn.Module):
 
         inputs = jnp.concatenate([obs_enc, actions], -1)
         outputs = self.network(inputs, train)
-        if self.init_final is not None:
-            value = nn.Dense(
-                1,
-                kernel_init=nn.initializers.uniform(-self.init_final, self.init_final),
-            )(outputs)
-        else:
-            value = nn.Dense(1, kernel_init=default_init())(outputs)
+
+        value = nn.Dense(self.output_dim, kernel_init=default_init())(outputs)
         return jnp.squeeze(value, -1)
 
 
@@ -139,6 +134,7 @@ class Policy(nn.Module):
     encoder: Optional[nn.Module]
     network: nn.Module
     action_dim: int
+    action_dim_discrete: Optional[int] = None
     init_final: Optional[float] = None
     std_parameterization: str = "exp"  # "exp", "softplus", "fixed", or "uniform"
     std_min: Optional[float] = 1e-5
@@ -198,6 +194,13 @@ class Policy(nn.Module):
                 loc=means,
                 scale_diag=stds,
             )
+
+        if self.action_dim_discrete is not None:
+            pi_d = nn.Dense(self.action_dim_discrete, kernel_init=default_init())(
+                outputs
+            )
+            dist = distrax.Categorical(logits=pi_d)
+            return distribution, dist
 
         return distribution
 

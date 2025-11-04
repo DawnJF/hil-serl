@@ -21,7 +21,6 @@ import sys
 
 sys.path.append(os.getcwd())
 from rl.envs_store import RecordEpisodeStatistics
-from rl.sac_agent import SACAgent
 from rl.sac_hybrid_single import SACAgentHybridSingleArm
 from serl_launcher.serl_launcher.utils.timer_utils import Timer
 from serl_launcher.serl_launcher.utils.train_utils import concat_batches
@@ -372,14 +371,14 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     # wait till the replay buffer is filled with enough data
     timer = Timer()
 
-    if isinstance(agent, SACAgent):
-        train_critic_networks_to_update = frozenset({"critic"})
-        train_networks_to_update = frozenset({"critic", "actor", "temperature"})
-    else:
-        train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
-        train_networks_to_update = frozenset(
-            {"critic", "grasp_critic", "actor", "temperature"}
-        )
+    # if isinstance(agent, SACAgent):
+    #     train_critic_networks_to_update = frozenset({"critic"})
+    #     train_networks_to_update = frozenset({"critic", "actor", "temperature"})
+    # else:
+    train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
+    train_networks_to_update = frozenset(
+        {"critic", "grasp_critic", "actor", "temperature"}
+    )
 
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
