@@ -16,37 +16,29 @@ from flax.training import checkpoints
 import os
 import copy
 import pickle as pkl
-from rl.envs_store import RecordEpisodeStatistics
 from natsort import natsorted
+import sys
 
-from serl_launcher.serl_launcher.agents.continuous.sac import SACAgent
-from serl_launcher.serl_launcher.agents.continuous.sac_hybrid_single import (
-    SACAgentHybridSingleArm,
-)
-from serl_launcher.serl_launcher.agents.continuous.sac_hybrid_dual import (
-    SACAgentHybridDualArm,
-)
+sys.path.append(os.getcwd())
+from rl.envs_store import RecordEpisodeStatistics
+from rl.sac_agent import SACAgent
+from rl.sac_hybrid_single import SACAgentHybridSingleArm
 from serl_launcher.serl_launcher.utils.timer_utils import Timer
 from serl_launcher.serl_launcher.utils.train_utils import concat_batches
 
-from serl_launcher.serl_launcher.agents.continuous.bc import BCAgent
-from serl_launcher.serl_launcher.utils.launcher import make_bc_agent
+# from serl_launcher.serl_launcher.agents.continuous.bc import BCAgent
+# from serl_launcher.serl_launcher.utils.launcher import make_bc_agent
 
 from agentlace.trainer import TrainerServer, TrainerClient
 from agentlace.data.data_store import QueuedDataStore
 
-from serl_launcher.serl_launcher.utils.launcher import (
-    make_sac_pixel_agent,
+from rl.launcher import (
     make_sac_pixel_agent_hybrid_single_arm,
-    make_sac_pixel_agent_hybrid_dual_arm,
     make_trainer_config,
     make_wandb_logger,
 )
-from serl_launcher.serl_launcher.data.data_store import (
-    MemoryEfficientReplayBufferDataStore,
-)
-
-from examples.experiments.mappings import CONFIG_MAPPING
+from rl.buffer_tools import MemoryEfficientReplayBufferDataStore
+from rl.mappings import CONFIG_MAPPING
 
 FLAGS = flags.FLAGS
 
@@ -63,7 +55,6 @@ flags.DEFINE_string("checkpoint_path", "outputs/rlpd", "Path to save checkpoints
 flags.DEFINE_string("bc_checkpoint_path", None, "Path to save BC checkpoints for IBRL")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_integer("training_starts", 100, "Wait")
-flags.DEFINE_boolean("save_video", False, "Save video.")
 
 flags.DEFINE_boolean(
     "debug", False, "Debug mode."
@@ -449,63 +440,45 @@ def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     env = config.get_environment(
         fake_env=FLAGS.learner,
-        save_video=FLAGS.save_video,
-        debug=FLAGS.debug,
     )
     env = RecordEpisodeStatistics(env)
 
     rng, sampling_rng = jax.random.split(rng)
 
-    if config.setup_mode == "single-arm-learned-gripper":  # this
+    bc_agent = None
+    # if FLAGS.bc_checkpoint_path is not None:
+    #     bc_agent: BCAgent = make_bc_agent(
+    #         seed=FLAGS.seed,
+    #         sample_obs=env.observation_space.sample(),
+    #         sample_action=env.action_space.sample(),
+    #         image_keys=config.image_keys,
+    #         encoder_type=config.encoder_type,
+    #     )
+    #     bc_agent: BCAgent = jax.device_put(
+    #         jax.tree_map(jnp.array, bc_agent), sharding.replicate()
+    #     )
+    #     bc_ckpt = checkpoints.restore_checkpoint(
+    #         FLAGS.bc_checkpoint_path,
+    #         bc_agent.state,
+    #     )
+    #     bc_agent = bc_agent.replace(state=bc_ckpt)
 
-        bc_agent = None
-        if FLAGS.bc_checkpoint_path is not None:
-
-            bc_agent: BCAgent = make_bc_agent(
-                seed=FLAGS.seed,
-                sample_obs=env.observation_space.sample(),
-                sample_action=env.action_space.sample(),
-                image_keys=config.image_keys,
-                encoder_type=config.encoder_type,
-            )
-            bc_agent: BCAgent = jax.device_put(
-                jax.tree_map(jnp.array, bc_agent), sharding.replicate()
-            )
-            bc_ckpt = checkpoints.restore_checkpoint(
-                FLAGS.bc_checkpoint_path,
-                bc_agent.state,
-            )
-            bc_agent = bc_agent.replace(state=bc_ckpt)
-
-        agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
-            seed=FLAGS.seed,
-            sample_obs=env.observation_space.sample(),
-            sample_action=env.action_space.sample(),
-            image_keys=config.image_keys,
-            encoder_type=config.encoder_type,
-            discount=config.discount,
-            optimizer_configs={
-                "learning_rate": FLAGS.learning_rate,
-                "warmup_steps": FLAGS.warmup_steps,
-                "cosine_decay_steps": FLAGS.cosine_decay_steps,
-                "weight_decay": FLAGS.weight_decay,
-                "clip_grad_norm": FLAGS.clip_grad_norm,
-                "return_lr_schedule": FLAGS.return_lr_schedule,
-            },
-        )
-        include_grasp_penalty = True
-    elif config.setup_mode == "dual-arm-learned-gripper":
-        agent: SACAgentHybridDualArm = make_sac_pixel_agent_hybrid_dual_arm(
-            seed=FLAGS.seed,
-            sample_obs=env.observation_space.sample(),
-            sample_action=env.action_space.sample(),
-            image_keys=config.image_keys,
-            encoder_type=config.encoder_type,
-            discount=config.discount,
-        )
-        include_grasp_penalty = True
-    else:
-        raise NotImplementedError(f"Unknown setup mode: {config.setup_mode}")
+    agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
+        seed=FLAGS.seed,
+        sample_obs=env.observation_space.sample(),
+        sample_action=env.action_space.sample(),
+        image_keys=config.image_keys,
+        discount=config.discount,
+        optimizer_configs={
+            "learning_rate": FLAGS.learning_rate,
+            "warmup_steps": FLAGS.warmup_steps,
+            "cosine_decay_steps": FLAGS.cosine_decay_steps,
+            "weight_decay": FLAGS.weight_decay,
+            "clip_grad_norm": FLAGS.clip_grad_norm,
+            "return_lr_schedule": FLAGS.return_lr_schedule,
+        },
+    )
+    include_grasp_penalty = True
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives

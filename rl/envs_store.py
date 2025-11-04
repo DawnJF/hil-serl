@@ -43,7 +43,7 @@ class UR_Platform_Env(gym.Env):
         self.config = config
         self.max_episode_length = config.MAX_EPISODE_LENGTH
 
-        self.gripper_sleep = config.GRIPPER_SLEEP
+        self.gripper_sleep = 0.6
 
         # convert last 3 elements from euler to quat, from size (6,) to (7,)
         self.resetpos = (
@@ -62,9 +62,6 @@ class UR_Platform_Env(gym.Env):
         self.random_xy_range = config.RANDOM_XY_RANGE
         self.random_rz_range = config.RANDOM_RZ_RANGE
         self.hz = hz
-        self.joint_reset_cycle = (
-            config.JOINT_RESET_PERIOD
-        )  # reset the robot joint every 200 cycles
 
         # boundary box
         self.xyz_bounding_box = gym.spaces.Box(
@@ -104,7 +101,6 @@ class UR_Platform_Env(gym.Env):
                 ),
             }
         )
-        self.cycle_count = 0
 
         if fake_env:
             return
@@ -236,7 +232,6 @@ class UR_Platform_Env(gym.Env):
 
         return images
 
-
     def go_to_reset(self, joint_reset=True):
         """
         The concrete steps to perform reset should be
@@ -278,14 +273,6 @@ class UR_Platform_Env(gym.Env):
     def reset(self, joint_reset=False, **kwargs):
         print("[UR_Platform_Env] Resetting robot")
         self.last_gripper_act = time.time()
-
-        self.cycle_count += 1
-        if (
-            self.joint_reset_cycle != 0
-            and self.cycle_count % self.joint_reset_cycle == 0
-        ):
-            self.cycle_count = 0
-            joint_reset = True
 
         self._recover()
         self.go_to_reset()
@@ -854,7 +841,6 @@ class UREnvConfig:
     DISPLAY_IMAGE: bool = True
     GRIPPER_SLEEP: float = 0.6
     MAX_EPISODE_LENGTH: int = 100
-    JOINT_RESET_PERIOD: int = 0
     REALSENSE_CAMERAS = {
         "wrist": {
             "dim": (1280, 720),
