@@ -3,71 +3,8 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 
-from rl.net import Actor, DiscreteQCritic, ImageEncoder
-
-
-class ProprioEncoder(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
-        super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim),
-            nn.LayerNorm(output_dim),
-            nn.Tanh(),
-        )
-
-    def forward(self, state):
-        return self.encoder(state)
-
-
-class EncoderWrapper(nn.Module):
-    def __init__(self, image_keys, proprio_dim=16):
-        super().__init__()
-        self.image_keys = image_keys
-        self.proprio_dim = proprio_dim
-        self.image_encoder = ImageEncoder(bottleneck_dim=512)
-        self.proprio_encoder = ProprioEncoder(
-            input_dim=proprio_dim, hidden_dim=64, output_dim=64
-        )
-
-    def forward(self, observations):
-        state = observations["state"]  # 本体感受信息
-        image_list = []
-        for key in self.image_keys:
-            image_list.append(observations[key])
-
-        images = torch.stack(image_list, dim=1)  # (B, N, C, H, W)
-
-        B, N, C, H, W = images.shape
-        assert N == len(
-            self.image_keys
-        ), f"Expected {len(self.image_keys)} images, but got {N}"
-
-        image_features = []
-
-        # Extract features from all images
-        for i in range(N):
-            img = images[:, i, :, :, :]  # Shape: (B, C, H, W)
-            img_features = self.image_encoder(img)  # (B, 256)
-            image_features.append(img_features)
-
-        image_features = torch.cat(image_features, dim=1)  # Shape: (B, N * image_dim)
-
-        state_features = self.proprio_encoder(state)
-        return torch.cat([image_features, state_features], dim=-1)
-
-    def get_out_shape(self, image_shape=128):
-        """获取编码器输出的形状"""
-
-        image = torch.zeros(1, 3, image_shape, image_shape)
-        state = torch.zeros(1, self.proprio_dim)
-
-        observations = {"state": state}
-        for i, key in enumerate(self.image_keys):
-            observations[key] = image
-
-        return self.forward(observations).shape[1]
+from bc.encoder import EncoderWrapper
+from rl.net import Actor, DiscreteQCritic
 
 
 class BCActor(nn.Module):
@@ -107,10 +44,13 @@ class BCActor(nn.Module):
 
 
 class RLActor(nn.Module):
-    def __init__(self):
+    def __init__(self, args):
         super().__init__()
-        self.c_actor = Actor(3)
-        self.d_actor = DiscreteQCritic(3)
+        action_continue_dim = args.get("action_continue_dim", 3)
+        action_discrete_dim = args.get("action_discrete_dim", 3)
+        image_keys = args.get("image_keys", ["image1", "image2"])
+        self.c_actor = Actor(action_continue_dim, image_keys)
+        self.d_actor = DiscreteQCritic(action_discrete_dim, image_keys)
 
     def forward(self, batch):
         # batch should be a dict with observations format

@@ -2,39 +2,24 @@ import os
 import time
 import sys
 
+import jax
+
 sys.path.append(os.getcwd())
-from examples.experiments.usb_pickup_insertion.config import OpenSwitchEnvConfig
-from examples.experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
-from rl.envs_temp import (
-    ChunkingWrapper,
-    GripperPenaltyWrapper,
-    Quat2EulerWrapper,
-    SERLObsWrapper,
-    UREnvConfig,
-    RelativeFrame,
-)
-from serl_robot_infra.franka_env.envs.wrappers import SpacemouseIntervention
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "examples")))
+from examples.experiments.mappings import CONFIG_MAPPING
 from utils.tools import print_dict_structure
 from bc.train_bc2rl import ActorWrapper
 
 
 def test_Env():
 
-    ckpt_path = "outputs/bc2rl/20251028_112543/checkpoint-40.pth"
+    ckpt_path = "outputs/bc2rl/20251103_171947/checkpoint-56.pth"
     model = ActorWrapper(ckpt_path)
 
-    proprio_keys = ["tcp_pose", "gripper_pose"]
     # config = UREnvConfig()
-    config = OpenSwitchEnvConfig()
-    config.MAX_EPISODE_LENGTH = 1000
-
-    env = UR_Platform_Env(config=config)
-    env = SpacemouseIntervention(env)
-    env = RelativeFrame(env)
-    env = Quat2EulerWrapper(env)
-    env = SERLObsWrapper(env, proprio_keys=proprio_keys)
-    env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
-    env = GripperPenaltyWrapper(env, penalty=-0.02)
+    task_name = "plug_into_socket_with_power_cord"
+    config = CONFIG_MAPPING[task_name]()
+    env = config.get_environment(train=False)
 
     print("==== observation_space ====")
     print_dict_structure(env.observation_space)
@@ -62,4 +47,10 @@ def test_Env():
 
 
 if __name__ == "__main__":
+
+    if not hasattr(jax, "tree_map"):
+        jax.tree_map = jax.tree.map
+    if not hasattr(jax, "tree_leaves"):
+        jax.tree_leaves = jax.tree.leaves
+
     test_Env()

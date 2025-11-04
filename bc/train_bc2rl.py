@@ -32,12 +32,11 @@ class Args:
     image_shape: int = 128
     action_continue_dim: int = 3  # xyz
     action_discrete_dim: int = 3  # gripper(open/close/keep)
-    image_num: int = 2  # 输入图像数量
     state_dim: int = 7
-    image_keys: list = field(default_factory=lambda: ["image1", "image2", "image3"])
+    image_keys: list = field(default_factory=lambda: ["rgb", "scene"])
 
     batch_size: int = 256
-    epochs: int = 50
+    epochs: int = 80
     learning_rate: float = 1e-4
     save_interval: int = 4
     resume_checkpoint: str = None
@@ -66,9 +65,9 @@ class ImagesActionDataset(Dataset):
 
         # 构造observations字典
         observations = {
-            "image1": self.data[idx]["image1"],
-            "image2": self.data[idx]["image2"],
-            "image3": self.data[idx]["image3"],
+            "rgb": self.data[idx]["rgb"],
+            # "image2": self.data[idx]["image2"],
+            "scene": self.data[idx]["scene"],
             "state": self.data[idx]["state"],
         }
 
@@ -88,15 +87,19 @@ class ImagesActionDataset(Dataset):
         return observations, continue_label, gripper_label
 
 
-def process_traj_state_history(transitions, key, history_length):
+def process_traj_state_history(transitions, key):
     shape = transitions[0][key].shape
     # [history_length, ...]
-    history = np.zeros((history_length, *shape), dtype=transitions[0][key].dtype)
+    history = np.zeros((10, *shape), dtype=transitions[0][key].dtype)
     for transition in transitions:
         # history[:history_len-1] + new
         history = np.roll(history, shift=-1, axis=0)
         history[-1] = transition[key]
-        transition[key] = history.flatten()
+        cat_list = []
+        cat_list.extend(history[-1])
+        cat_list.extend(history[-3])
+        cat_list.extend(history[-6])
+        transition[key] = np.concatenate(cat_list, axis=0)
     return transitions
 
 
@@ -109,17 +112,17 @@ def process_traj_img_history(transitions, key):
         history = np.roll(history, shift=-1, axis=0)
         history[-1] = transition[key]
 
-        transition["image1"] = history[0]
-        transition["image2"] = history[5]
+        transition["image1"] = history[-6]
+        transition["image2"] = history[-3]
         transition["image3"] = history[-1]
     return transitions
 
 
 def load_and_split_data(args):
     mapping = {
-        "observations:rgb": "image1",
-        "observations:wrist": "image2",
-        "observations:scene": "image3",
+        "observations:rgb": "rgb",
+        # "observations:wrist": "image2",
+        "observations:scene": "scene",
         "observations:state": "state",
         "actions": "actions",
     }
@@ -132,7 +135,9 @@ def load_and_split_data(args):
         #     # classifier_data 子目录中的文件
         #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12/*.pkl",
         #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
-        "datasets/trajectories/2025-10-27/*.pkl",
+        # "datasets/trajectories/2025-10-27/*.pkl",
+        # "datasets/trajectories/2025-10-29/*.pkl",
+        "datasets/plug_with_power_cord_11_3/merged_data43328.pkl",
     ]
     # data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
 
@@ -142,7 +147,8 @@ def load_and_split_data(args):
         nonlocal total_added, data_list, mapping, args
 
         file_data = load_pkl(file_path, mapping)
-        process_traj_img_history(file_data, "image3")
+        # process_traj_img_history(file_data, "image3")
+        # process_traj_state_history(file_data, "state")
         data_list.extend(file_data)
         total_added += len(file_data)
         logging.info(f"加载 {file_path}: {len(file_data)} 个样本")
@@ -199,8 +205,8 @@ def train(args: Args):
 
     train_dataloader, test_dataloader = load_and_split_data(args)
 
-    # model = RLActor().to(device)
-    model = BCActor(args.__dict__).to(device)
+    model = RLActor(args.__dict__).to(device)
+    # model = BCActor(args.__dict__).to(device)
 
     if args.resume_checkpoint:
         model.load_checkpoint(args.resume_checkpoint)
@@ -327,26 +333,36 @@ class ActorWrapper:
     def __init__(self, model_path):
         args = Args()
         self.device = get_device()
-        self.model = BCActor(args.__dict__).to(self.device)
-        # self.model = RLActor().to(self.device)
+        # self.model = BCActor(args.__dict__).to(self.device)
+        self.model = RLActor(args.__dict__).to(self.device)
         self.model.load_checkpoint(model_path)
         self.model.eval()
         self.image_transform = get_eval_transform()
 
-        # self.history_state = np.zeros((4, 1, 7), dtype=np.float32)
+        # self.history_state = np.zeros((10, 1, 7), dtype=np.float32)
         self.history_state = None
+        # self.history_image = np.zeros((10, 1, 128, 128, 3), dtype=np.float32)
+        self.history_image = None
 
     def predict(self, obs, argmax=True):
         # 构造observations字典，匹配训练时的格式
-        observations = {
-            "state": obs["state"],
-            "rgb": obs["rgb"],
-            "wrist": obs["wrist"],
-        }
+        observations = obs.copy()
+        if self.history_image is not None:
+            self.history_image = np.roll(self.history_image, shift=-1, axis=0)
+            self.history_image[-1] = obs["scene"]
+
+            observations["image1"] = self.history_image[-6]
+            observations["image2"] = self.history_image[-3]
+            observations["image3"] = self.history_image[-1]
+
         if self.history_state is not None:
             self.history_state = np.roll(self.history_state, shift=-1, axis=0)
             self.history_state[-1] = obs["state"]
-            observations["state"] = self.history_state.reshape(1, -1)
+            cat_list = []
+            cat_list.extend(self.history_state[-1])
+            cat_list.extend(self.history_state[-3])
+            cat_list.extend(self.history_state[-6])
+            observations["state"] = np.concatenate(cat_list, axis=0).reshape(1, -1)
 
         observations = dict_data_to_torch(observations, self.image_transform)
 
