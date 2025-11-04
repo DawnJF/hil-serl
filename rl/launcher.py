@@ -8,7 +8,7 @@ from agentlace.trainer import TrainerConfig
 
 from rl.common import Batch, PRNGKey
 from serl_launcher.serl_launcher.common.wandb import WandBLogger
-from rl.sac_hybrid_single import SACAgentHybridSingleArm
+from rl.sac_hybrid_single import HybridSACAgent, SACAgentHybridSingleArm
 from rl.data_augmentations import batched_random_crop
 
 ##############################################################################
@@ -31,6 +31,58 @@ def make_sac_pixel_agent_hybrid_single_arm(
         sample_obs,
         sample_action,
         encoder_type=encoder_type,
+        use_proprio=True,
+        image_keys=image_keys,
+        policy_kwargs={
+            "tanh_squash_distribution": True,
+            "std_parameterization": "exp",
+            "std_min": 1e-5,
+            "std_max": 5,
+        },
+        critic_network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        grasp_critic_network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        policy_network_kwargs={
+            "activations": nn.tanh,
+            "use_layer_norm": True,
+            "hidden_dims": [256, 256],
+        },
+        temperature_init=1e-2,
+        discount=discount,
+        backup_entropy=False,
+        critic_ensemble_size=2,
+        critic_subsample_size=None,
+        reward_bias=reward_bias,
+        target_entropy=target_entropy,
+        augmentation_function=make_batch_augmentation_func(image_keys),
+        optimizer_configs=optimizer_configs,
+        bc_agent=bc_agent,
+    )
+    return agent
+
+
+def make_hybrid_sac_agent(
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    reward_bias=0.0,
+    target_entropy=None,
+    discount=0.97,
+    optimizer_configs=None,
+    bc_agent=None,
+):
+    agent = HybridSACAgent.create_pixels(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
         use_proprio=True,
         image_keys=image_keys,
         policy_kwargs={

@@ -21,7 +21,7 @@ import sys
 
 sys.path.append(os.getcwd())
 from rl.envs_store import RecordEpisodeStatistics
-from rl.sac_hybrid_single import SACAgentHybridSingleArm
+from rl.sac_hybrid_single import SACAgentHybridSingleArm, HybridSACAgent
 from serl_launcher.serl_launcher.utils.timer_utils import Timer
 from serl_launcher.serl_launcher.utils.train_utils import concat_batches
 
@@ -33,6 +33,7 @@ from agentlace.data.data_store import QueuedDataStore
 
 from rl.launcher import (
     make_sac_pixel_agent_hybrid_single_arm,
+    make_hybrid_sac_agent,
     make_trainer_config,
     make_wandb_logger,
 )
@@ -41,14 +42,12 @@ from rl.mappings import CONFIG_MAPPING
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string(
-    "exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder."
-)
+flags.DEFINE_string("exp_name", "debug", "Name of experiment corresponding to folder.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_boolean("learner", False, "Whether this is a learner.")
 flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
-flags.DEFINE_integer("port", 5588, "port")
+flags.DEFINE_integer("port", 5188, "port")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_string("checkpoint_path", "outputs/rlpd", "Path to save checkpoints.")
 flags.DEFINE_string("bc_checkpoint_path", None, "Path to save BC checkpoints for IBRL")
@@ -462,7 +461,8 @@ def main(_):
     #     )
     #     bc_agent = bc_agent.replace(state=bc_ckpt)
 
-    agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
+    # agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
+    agent: HybridSACAgent = make_hybrid_sac_agent(
         seed=FLAGS.seed,
         sample_obs=env.observation_space.sample(),
         sample_action=env.action_space.sample(),

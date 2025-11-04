@@ -71,7 +71,9 @@ class Critic(nn.Module):
         outputs = self.network(inputs, train)
 
         value = nn.Dense(self.output_dim, kernel_init=default_init())(outputs)
-        return jnp.squeeze(value, -1)
+        if self.output_dim == 1:
+            value = jnp.squeeze(value, -1)
+        return value
 
 
 class GraspCritic(nn.Module):
