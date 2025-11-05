@@ -850,31 +850,29 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         )
         chex.assert_shape(next_actions_c_log_probs, (batch_size,))
 
-        # TODO
-        next_actions_d, next_actions_d_log_probs = (
-            next_action_d_dist.sample_and_log_prob(seed=rng)
-        )
-        chex.assert_shape(next_actions_d_log_probs, (batch_size,))
+        action_d = next_action_d_dist.sample(seed=rng)
+        # 概率和 log 概率
+        prob_d = next_action_d_dist.probs
+        log_prob_d = next_action_d_dist.log_prob(action_d)
+        chex.assert_shape(log_prob_d, (batch_size,))
 
-        return (
-            next_actions_c,
-            next_actions_c_log_probs,
-            next_actions_d,
-            next_actions_d_log_probs,
-        )
+        return next_actions_c, next_actions_c_log_probs, action_d, log_prob_d, prob_d
 
     def critic_loss_fn(self, batch, params: Params, rng: PRNGKey):
         """classes that inherit this class can change this function"""
         batch_size = batch["rewards"].shape[0]
         # Extract continuous actions for critic
-        actions = batch["actions"][..., :-1]
+        actions = batch["actions"]
+        actions_c = actions[..., :-1]
+        action_d = actions[..., -1:] + 1  # Cast env action from [-1, 1] to {0, 1, 2}
 
         rng, next_action_sample_key = jax.random.split(rng)
         (
             next_actions_c,
             next_actions_c_log_probs,
             next_actions_d,
-            next_actions_d_log_probs,
+            next_log_prob_d,
+            next_actions_prob_d,
         ) = self._compute_next_actions(batch, next_action_sample_key)
 
         # Evaluate next Qs for all ensemble members (cheap because we're only doing the forward pass)
@@ -898,10 +896,7 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         # Minimum Q across (subsampled) ensemble members
         target_next_min_q = target_next_qs.min(axis=0)
 
-        # TODO
-        target_next_min_q = target_next_min_q * next_actions_d_log_probs[:, None].sum(
-            axis=-1
-        )
+        target_next_min_q = (target_next_min_q * next_actions_prob_d).sum(axis=-1)
 
         target_next_min_q = self.select_max_q(
             target_next_min_q, batch["next_observations"], rng
@@ -910,6 +905,7 @@ class HybridSACAgent(flax.struct.PyTreeNode):
 
         target_q = (
             batch["rewards"]
+            + batch["grasp_penalty"]
             + self.config["discount"] * batch["masks"] * target_next_min_q
         )
         chex.assert_shape(target_q, (batch_size,))
@@ -919,8 +915,19 @@ class HybridSACAgent(flax.struct.PyTreeNode):
             target_q = target_q - temperature * next_actions_c_log_probs
 
         predicted_qs = self.forward_critic(
-            batch["observations"], actions, rng=rng, grad_params=params
+            batch["observations"], actions_c, rng=rng, grad_params=params
         )
+        # predicted_qs = jnp.take(predicted_qs, action_d.astype(jnp.int16), axis=-1)
+
+        # 扩展 action_d 到 (2, 256, 1)，让它能广播到第一个维度 (Q网络数量)
+        action_d_expanded = jnp.broadcast_to(
+            action_d, (predicted_qs.shape[0],) + action_d.shape
+        )  # (2, 256, 1)
+
+        # 在最后一维 (axis=2) 上选择对应离散动作的 Q 值 (2, 256)
+        predicted_qs = jnp.take_along_axis(
+            predicted_qs, action_d_expanded.astype(jnp.int16), axis=2
+        ).squeeze(-1)
 
         chex.assert_shape(
             predicted_qs, (self.config["critic_ensemble_size"], batch_size)
@@ -947,23 +954,35 @@ class HybridSACAgent(flax.struct.PyTreeNode):
             batch["observations"], rng=policy_rng, grad_params=params
         )
         actions_c, log_probs_c = action_c_dist.sample_and_log_prob(seed=sample_rng)
-        actions_d, log_probs_d = action_d_dist.sample_and_log_prob(seed=sample_rng)
-        probs_d = log_probs_d.exp()
+
+        action_d = action_d_dist.sample(seed=rng)
+        # 概率和 log 概率
+        prob_d = action_d_dist.probs
+        log_prob_d = action_d_dist.log_prob(action_d)
 
         predicted_qs = self.forward_critic(
             batch["observations"],
             actions_c,
             rng=critic_rng,
         )
+        # TODO mean or min
         predicted_q = predicted_qs.mean(axis=0)
-        chex.assert_shape(predicted_q, (batch_size,))
+
+        # chex.assert_shape(predicted_q, (batch_size,))
         chex.assert_shape(log_probs_c, (batch_size,))
 
+        # TODO
+        prob_d_selected = jnp.take_along_axis(
+            prob_d, action_d.reshape(-1, 1).astype(jnp.int16), axis=1
+        ).squeeze(-1)
+
         actor_loss_c = jnp.mean(
-            probs_d * (probs_d * temperature * log_probs_c - predicted_q).sum(axis=-1)
+            jnp.sum(prob_d * (-predicted_q), axis=-1)
+            + temperature * prob_d_selected * log_probs_c
         )
+
         actor_loss_d = jnp.mean(
-            probs_d * (temperature * log_probs_d - predicted_q).sum(axis=-1)
+            jnp.sum(prob_d * (log_prob_d.reshape(-1, 1) - predicted_q), axis=-1)
         )
 
         actor_loss = actor_loss_c + actor_loss_d
@@ -980,11 +999,15 @@ class HybridSACAgent(flax.struct.PyTreeNode):
 
     def temperature_loss_fn(self, batch, params: Params, rng: PRNGKey):
         rng, next_action_sample_key = jax.random.split(rng)
-        next_actions, next_actions_log_probs = self._compute_next_actions(
-            batch, next_action_sample_key
-        )
+        (
+            next_actions_c,
+            next_actions_c_log_probs,
+            next_actions_d,
+            next_log_prob_d,
+            next_actions_prob_d,
+        ) = self._compute_next_actions(batch, next_action_sample_key)
 
-        entropy = -next_actions_log_probs.mean()
+        entropy = -next_actions_c_log_probs.mean()
         temperature_loss = self.temperature_lagrange_penalty(
             entropy,
             grad_params=params,
@@ -994,7 +1017,6 @@ class HybridSACAgent(flax.struct.PyTreeNode):
     def loss_fns(self, batch):
         return {
             "critic": partial(self.critic_loss_fn, batch),
-            "grasp_critic": partial(self.grasp_critic_loss_fn, batch),
             "actor": partial(self.policy_loss_fn, batch),
             "temperature": partial(self.temperature_loss_fn, batch),
         }

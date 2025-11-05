@@ -49,7 +49,9 @@ flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_integer("port", 5188, "port")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
-flags.DEFINE_string("checkpoint_path", "outputs/rlpd", "Path to save checkpoints.")
+flags.DEFINE_string(
+    "checkpoint_path", "outputs/rlpd/debug", "Path to save checkpoints."
+)
 flags.DEFINE_string("bc_checkpoint_path", None, "Path to save BC checkpoints for IBRL")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_integer("training_starts", 100, "Wait")
@@ -370,14 +372,14 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     # wait till the replay buffer is filled with enough data
     timer = Timer()
 
-    # if isinstance(agent, SACAgent):
-    #     train_critic_networks_to_update = frozenset({"critic"})
-    #     train_networks_to_update = frozenset({"critic", "actor", "temperature"})
-    # else:
-    train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
-    train_networks_to_update = frozenset(
-        {"critic", "grasp_critic", "actor", "temperature"}
-    )
+    if isinstance(agent, HybridSACAgent):
+        train_critic_networks_to_update = frozenset({"critic"})
+        train_networks_to_update = frozenset({"critic", "actor", "temperature"})
+    else:
+        train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
+        train_networks_to_update = frozenset(
+            {"critic", "grasp_critic", "actor", "temperature"}
+        )
 
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
