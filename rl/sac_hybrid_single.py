@@ -971,26 +971,12 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         # chex.assert_shape(predicted_q, (batch_size,))
         chex.assert_shape(log_probs_c, (batch_size,))
 
-        # TODO
-        prob_d_selected = jnp.take_along_axis(
-            prob_d, action_d.reshape(-1, 1).astype(jnp.int16), axis=1
-        ).squeeze(-1)
-
-        actor_loss_c = jnp.mean(
-            jnp.sum(prob_d * (-predicted_q), axis=-1)
-            + temperature * prob_d_selected * log_probs_c
+        actor_loss = jnp.mean(
+            jnp.sum(prob_d * (-predicted_q), axis=-1) + temperature * log_probs_c
         )
-
-        actor_loss_d = jnp.mean(
-            jnp.sum(prob_d * (log_prob_d.reshape(-1, 1) - predicted_q), axis=-1)
-        )
-
-        actor_loss = actor_loss_c + actor_loss_d
 
         info = {
             "actor_loss": actor_loss,
-            "actor_loss_c": actor_loss_c,
-            "actor_loss_d": actor_loss_d,
             "temperature": temperature,
             "entropy": -log_probs_c.mean(),
         }
