@@ -56,7 +56,6 @@ class UR_Platform_Env(gym.Env):
         self.gripper_speed = config.GRIPPER_SPEED
         self.gripper_force = config.GRIPPER_FORCE
         self._update_currpos()
-        self.last_gripper_act = time.time()
         self.lastsent = time.time()
         self.randomreset = config.RANDOM_RESET
         self.random_xy_range = config.RANDOM_XY_RANGE
@@ -84,13 +83,12 @@ class UR_Platform_Env(gym.Env):
             {
                 "state": gym.spaces.Dict(
                     {
-                        "tcp_pose": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(7,)
-                        ),  # xyz + quat
-                        "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
+                        # xyz + quat
+                        "tcp_pose": gym.spaces.Box(-np.inf, np.inf, shape=(7,)),
+                        # "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
                         "gripper_pose": gym.spaces.Box(-1, 1, shape=(1,)),
-                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
-                        "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        # "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        # "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
                     }
                 ),
                 "images": gym.spaces.Dict(
@@ -272,7 +270,6 @@ class UR_Platform_Env(gym.Env):
 
     def reset(self, joint_reset=False, **kwargs):
         print("[UR_Platform_Env] Resetting robot")
-        self.last_gripper_act = time.time()
 
         self._recover()
         self.go_to_reset()
@@ -299,11 +296,10 @@ class UR_Platform_Env(gym.Env):
         """Internal function to send gripper command to the robot."""
 
         if mode == "binary":
-            time_check = (time.time() - self.last_gripper_act) > self.gripper_sleep
 
-            print(f"[DEBUG] _send_g {pos}({self.currgripper}), {time_check}")
+            print(f"[DEBUG] _send_g {pos}({self.currgripper})")
 
-            if (pos <= -0.5) and time_check:  # close gripper
+            if pos <= -0.5:  # close gripper
                 self.client.post(
                     {
                         "type": "close_gripper",
@@ -312,22 +308,13 @@ class UR_Platform_Env(gym.Env):
                         "gripper_force": self.gripper_force,
                     }
                 )
-                self.last_gripper_act = time.time()
-                # time.sleep(self.gripper_sleep)
-            elif (
-                (pos >= 0.5)
-                # and (self.currgripper < 0.85)
-                # and (self.currgripper > 0.25)
-                and ((time.time() - self.last_gripper_act) > self.gripper_sleep)
-            ):  # open gripper
+
+            elif pos >= 0.5:  # open gripper
                 self.client.post(
                     {"type": "open_gripper", "arr": self.gripper_open_pose}
                 )
-                # self.last_gripper_act = time.time()
-                # time.sleep(self.gripper_sleep)
             else:
                 return
-            self.last_gripper_act = time.time()
 
         elif mode == "continuous":
             raise NotImplementedError("Continuous gripper control is optional")
@@ -339,6 +326,8 @@ class UR_Platform_Env(gym.Env):
         ps = self.client.post({"type": "getstate"})
         self.currpos = np.array(ps["pose"])
         self.currgripper = np.array(ps["gripper"])
+        self.curr_force = np.array(ps["force"])
+        print(f"[DEBUG] curr_force: {self.curr_force}")
 
         self.cap = ps["obs"]
         if "reward" in ps["obs"]:
