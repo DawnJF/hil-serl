@@ -26,12 +26,13 @@ from experiments.usb_pickup_insertion.wrapper import (
 from experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 
 
-class UREnvConfig(DefaultEnvConfig):
+class UREnvConfig:
     REALSENSE_CAMERAS = {
         # "wrist": {"dim": (1280, 720)},
         "rgb": {"dim": (1280, 720)},
         "scene": {"dim": (1280, 720)},
     }
+    # "scene": lambda img: img[225:430, 150:590],
     IMAGE_CROP = {
         # "wrist": lambda img: img[60:350, 50:590],
         "rgb": lambda img: img[250:510, 320:560],
@@ -41,8 +42,11 @@ class UREnvConfig(DefaultEnvConfig):
     #     [0.553, 0.1769683108549487, 0.25097833796596336, np.pi, 0, -np.pi / 2]
     # )
     # reset_xyz = np.array([-0.35, -0.5, 0.15])
+    #  [-0.42, -0.42, 0.181]
+    # [-0.4961725175380707, -0.27718037366867065, 0.18155656599998474]
     reset_xyz = np.array(
-        [-0.4961725175380707, -0.27718037366867065, 0.18155656599998474]
+        [-0.42, -0.42, 0.18]
+        # [-0.496, -0.277, 0.181]
     )
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
     # For plug
@@ -60,8 +64,8 @@ class UREnvConfig(DefaultEnvConfig):
     GRIPPER_CLOSE_POSE = 190
     GRIPPER_SPEED = 30
     GRIPPER_FORCE = 180
-    RANDOM_RESET = True
-    # RANDOM_RESET = False
+    # RANDOM_RESET = True
+    RANDOM_RESET = False
 
     RANDOM_XY_RANGE = 0.01
     RANDOM_RZ_RANGE = 0.1
@@ -75,62 +79,28 @@ class UREnvConfig(DefaultEnvConfig):
     )
     MAX_EPISODE_LENGTH = 250
 
-    # image transform configs
-    TFS = {
-        "brightness": {
-            "weight": 1.0,
-            "type": "ColorJitter",
-            "kwargs": {"brightness": [0.8, 1.2]},
-        },
-        "contrast": {
-            "weight": 1.0,
-            "type": "ColorJitter",
-            "kwargs": {"contrast": [0.8, 1.2]},
-        },
-        "saturation": {
-            "weight": 1.0,
-            "type": "ColorJitter",
-            "kwargs": {"saturation": [0.5, 1.5]},
-        },
-        "hue": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"hue": [-0.05, 0.05]}},
-        "sharpness": {
-            "weight": 1.0,
-            "type": "SharpnessJitter",
-            "kwargs": {"sharpness": [0.5, 1.5]},
-        },
-        "translation": {
-            "weight": 1.0,
-            "type": "RandomAffine",
-            "kwargs": {"degrees": 0, "translate": (0.1, 0.1)},
-        },
-        # "perspective":{
-        #     "weight": 1.0,
-        #     "type": "RandomPerspective",
-        #     "kwargs": {
-        #         "distortion_scale": 0.2,  # 中等变形强度，不破坏特征
-        #         "p": 0.5,                 # 50%概率应用，平衡多样性和稳定性
-        #         "fill": (0, 0, 0)         # 空白区域填黑色（根据你的数据集背景色调整）
-        #     }
-        # }
-    }
-    MAX_NUM_TRANSFORMS = 5  # maximum number of transforms to apply
-    ENABLE_TRANSFORMS = True  # whether to enable image transforms
-    RANDOM_ORDER = True  # whether to apply transforms in random order
-    CAMERA_SECTIONS = [
-        # "wrist",
-        "rgb",
-        "scene",
-    ]
-    PROBABILITY = 0.5  # probability to apply image transforms
 
+class TrainConfig:
 
-class TrainConfig(DefaultTrainingConfig):
+    agent: str = "drq"
+    max_traj_length: int = 100
+    batch_size: int = 256
+
+    max_steps: int = 1000000
+    replay_buffer_capacity: int = 200000
+
+    steps_per_update: int = 50
+
+    log_period: int = 10
+    eval_period: int = 2000
+
+    eval_checkpoint_step: int = 0
+    eval_n_trajs: int = 5
     image_keys = [
         # "wrist",
         "rgb",
         "scene",
     ]
-    classifier_keys = ["side_classifier"]
     # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
     proprio_keys = ["tcp_pose", "gripper_pose"]
     checkpoint_period = 1000
@@ -139,13 +109,12 @@ class TrainConfig(DefaultTrainingConfig):
     # discount = 0.99
     discount = 0.98
     buffer_period = 1000
-    encoder_type = "resnet-pretrained"
-    setup_mode = "single-arm-learned-gripper"
 
-    def get_environment(
-        self, fake_env=False, save_video=False, classifier=False, debug=False
-    ):
-        env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
+    def get_environment(self, fake_env=False, debug=False):
+        env_config = UREnvConfig()
+        if debug:
+            env_config.MAX_EPISODE_LENGTH = 1000
+        env = UR_Platform_Env(fake_env=fake_env, config=env_config)
         # env = HumanControlTargetEnv(env, "1")
         env = HumanRewardEnv(env)
         env = SpacemouseIntervention(env)
@@ -153,7 +122,5 @@ class TrainConfig(DefaultTrainingConfig):
         env = Quat2EulerWrapper(env)
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
-        #     env = MultiCameraBinaryRewardClassifierWrapper(env, reward_func)p
         env = GripperPenaltyWrapper(env, penalty=-0.04)
-        env = ImageTransformWrapper(env, config=UREnvConfig())
         return env

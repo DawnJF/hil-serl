@@ -14,7 +14,6 @@ from gymnasium.spaces import flatten_space, flatten
 from PIL import Image
 
 sys.path.append(os.getcwd())
-from examples.experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 from examples.experiments.usb_pickup_insertion.wrapper import HumanRewardEnv
 from serl_robot_infra.franka_env.utils.transformations import (
     construct_adjoint_matrix,
@@ -25,6 +24,10 @@ from serl_robot_infra.franka_env.envs.wrappers import (
     SpacemouseIntervention,
 )
 from utils.rotations import euler_2_quat
+
+
+def print_color(x):
+    return print("\033[35m {}\033[00m".format(x))
 
 
 class UR_Platform_Env(gym.Env):
@@ -42,8 +45,6 @@ class UR_Platform_Env(gym.Env):
         self._RESET_POSE = config.RESET_POSE
         self.config = config
         self.max_episode_length = config.MAX_EPISODE_LENGTH
-
-        self.gripper_sleep = 0.6
 
         # convert last 3 elements from euler to quat, from size (6,) to (7,)
         self.resetpos = (
@@ -167,7 +168,7 @@ class UR_Platform_Env(gym.Env):
 
         self.curr_path_length += 1
         dt_s = time.perf_counter() - start_time
-        min_step_time = 1 / 30  # 30hz
+        min_step_time = 1 / 60  # 60hz
         if dt_s < min_step_time:
             print(
                 f"[UR_Platform_Env] sleep min_step_time: {(min_step_time - dt_s):.4f}s"
@@ -179,13 +180,11 @@ class UR_Platform_Env(gym.Env):
         reward = self.reward
         done = self.curr_path_length >= self.max_episode_length or reward
         if reward == 1:
-            print(f"\033[35m [UR_Platform_Env]: reward 1\033[0m")
+            print_color(f"[UR_Platform_Env]: reward 1")
         if self.curr_path_length >= self.max_episode_length:
             # if executed time exceeds max length, give a -1 penalty.
             reward = 0
-            print(
-                f"\033[34m[UR_Platform_Env]: max_episode_length {self.max_episode_length}\033[0m"
-            )
+            print_color(f"[UR_Platform_Env]: max_episode_length reward {reward}")
         return ob, int(reward), done, False, {"succeed": reward}
 
     def step_long(self, target: np.ndarray) -> tuple:
@@ -230,64 +229,41 @@ class UR_Platform_Env(gym.Env):
 
         return images
 
-    def go_to_reset(self, joint_reset=True):
+    def go_to_reset(self):
         """
         The concrete steps to perform reset should be
         implemented each subclass for the specific task.
         Should override this method if custom reset procedure is needed.
         """
 
-        # Perform joint reset if needed
-        if joint_reset:
-            print("====JOINT RESET====")
-            # requests.post(self.url + "jointreset")
-            arr = np.array(self._RESET_POSE).astype(np.float32)
-            if self.randomreset:
-                noise = np.random.normal(0, 0.01, 3)
-                arr[:3] += noise
-            if self.gripper_open_pose:
-                arr = np.concatenate([arr, [self.gripper_open_pose]])
-            data = {"type": "jointreset", "arr": arr.tolist()}
-            self.client.post(data)
-            time.sleep(3)
-            return
+        print("====JOINT RESET====")
+        # requests.post(self.url + "jointreset")
+        arr = np.array(self._RESET_POSE).astype(np.float32)
+        if self.randomreset:
+            noise = np.random.normal(0, 0.01, 3)
+            arr[:3] += noise
+        if self.gripper_open_pose:
+            arr = np.concatenate([arr, [self.gripper_open_pose]])
 
-        # Perform Carteasian reset
-        if self.randomreset:  # randomize reset position in xy plane
-            reset_pose = self.resetpos.copy()
-            reset_pose[:2] += np.random.uniform(
-                -self.random_xy_range, self.random_xy_range, (2,)
-            )
-            euler_random = self._RESET_POSE[3:].copy()
-            euler_random[-1] += np.random.uniform(
-                -self.random_rz_range, self.random_rz_range
-            )
-            reset_pose[3:] = euler_2_quat(euler_random)
-            self.interpolate_move(reset_pose, timeout=1)
-        else:
-            reset_pose = self.resetpos.copy()
-            self.interpolate_move(reset_pose, timeout=1)
+        data = {"type": "jointreset", "arr": arr.tolist()}
+        self.client.post(data)
+        time.sleep(3)
+        return
 
     def reset(self, joint_reset=False, **kwargs):
         print("[UR_Platform_Env] Resetting robot")
 
-        self._recover()
         self.go_to_reset()
-        self._recover()
         self.curr_path_length = 0
 
         self._update_currpos()
         obs = self._get_obs()
         return obs, {"succeed": False}
 
-    def _recover(self):
-        """Internal function to recover the robot from error state."""
-        self.client.post({"type": "clearerr"})
-
     def _send_pos_command(self, pos: np.ndarray):
         """Internal function to send position command to the robot."""
         # print(f"[DEBUG] _send_pos_command {pos}")
-        self._recover()
+
         arr = np.array(pos).astype(np.float32)
         data = {"type": "pose", "arr": arr.tolist()}
         self.client.post(data)

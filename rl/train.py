@@ -492,7 +492,7 @@ def main(_):
         target_entropy=FLAGS.target_entropy,
     )
     include_grasp_penalty = True
-    include_o_actions = False # 还没测试通过
+    include_o_actions = False  # 还没测试通过
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
