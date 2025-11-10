@@ -33,12 +33,13 @@ class Actor(nn.Module):
         self,
         action_dim: int,
         image_keys: list[str],
+        proprio_dim: int,
         std_min: float = 1e-05,
         std_max: float = 5,
     ):
         super().__init__()
 
-        self.encoder = EncoderWrapper(image_keys, proprio_dim=7)
+        self.encoder = EncoderWrapper(image_keys, proprio_dim)
         self.action_dim = action_dim
         self.std_min = std_min
         self.std_max = std_max
@@ -142,9 +143,9 @@ class Critic(nn.Module):
 class DiscreteQCritic(nn.Module):
     """Discrete Q-value critic for discrete actions (like grasp/no-grasp)"""
 
-    def __init__(self, num_discrete_actions, image_keys: list[str]):
+    def __init__(self, num_discrete_actions, image_keys: list[str], state_dim: int):
         super().__init__()
-        self.encoder = EncoderWrapper(image_keys, proprio_dim=7)
+        self.encoder = EncoderWrapper(image_keys, proprio_dim=state_dim)
         self.num_discrete_actions = num_discrete_actions
 
         # 使用简化的Dueling网络架构

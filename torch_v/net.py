@@ -48,9 +48,10 @@ class RLActor(nn.Module):
         super().__init__()
         action_continue_dim = args.get("action_continue_dim", 3)
         action_discrete_dim = args.get("action_discrete_dim", 3)
+        state_dim = args.get("state_dim", 7)
         image_keys = args.get("image_keys", ["image1", "image2"])
-        self.c_actor = Actor(action_continue_dim, image_keys)
-        self.d_actor = DiscreteQCritic(action_discrete_dim, image_keys)
+        self.c_actor = Actor(action_continue_dim, image_keys, state_dim)
+        self.d_actor = DiscreteQCritic(action_discrete_dim, image_keys, state_dim)
 
     def forward(self, batch):
         # batch should be a dict with observations format

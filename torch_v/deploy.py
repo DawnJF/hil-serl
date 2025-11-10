@@ -6,20 +6,20 @@ import jax
 
 sys.path.append(os.getcwd())
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "examples")))
-from examples.experiments.mappings import CONFIG_MAPPING
+from rl.mappings import CONFIG_MAPPING
 from utils.tools import print_dict_structure
 from torch_v.train_bc2rl import ActorWrapper
 
 
 def test_Env():
 
-    ckpt_path = "outputs/bc2rl/20251103_171947/checkpoint-56.pth"
+    ckpt_path = "outputs/bc2rl/20251107_113943/checkpoint-200.pth"
     model = ActorWrapper(ckpt_path)
 
-    # config = UREnvConfig()
-    task_name = "plug_into_socket_with_power_cord"
+    # task_name = "plug_into_socket_with_power_cord"
+    task_name = "open_switch"
     config = CONFIG_MAPPING[task_name]()
-    env = config.get_environment(train=False)
+    env = config.get_environment()
 
     print("==== observation_space ====")
     print_dict_structure(env.observation_space)

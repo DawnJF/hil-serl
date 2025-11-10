@@ -40,8 +40,8 @@ class Args:
     image_keys: list = field(default_factory=lambda: ["rgb", "scene"])
 
     batch_size: int = 256
-    epochs: int = 80
-    learning_rate: float = 1e-4
+    epochs: int = 200
+    learning_rate: float = 2e-4
     save_interval: int = 4
     resume_checkpoint: str = None
 
@@ -69,7 +69,7 @@ class ImagesActionDataset(Dataset):
 
         # 构造observations字典
         observations = {
-            "rgb": self.data[idx]["rgb"],
+            # "rgb": self.data[idx]["rgb"],
             # "image2": self.data[idx]["image2"],
             "scene": self.data[idx]["scene"],
             "state": self.data[idx]["state"],
@@ -101,8 +101,9 @@ def process_traj_state_history(transitions, key):
         history[-1] = transition[key]
         cat_list = []
         cat_list.extend(history[-1])
+        cat_list.extend(history[-2])
         cat_list.extend(history[-3])
-        cat_list.extend(history[-6])
+        cat_list.extend(history[-4])
         transition[key] = np.concatenate(cat_list, axis=0)
     return transitions
 
@@ -124,7 +125,7 @@ def process_traj_img_history(transitions, key):
 
 def load_and_split_data(args):
     mapping = {
-        "observations:rgb": "rgb",
+        # "observations:rgb": "rgb",
         # "observations:wrist": "image2",
         "observations:scene": "scene",
         "observations:state": "state",
@@ -141,7 +142,9 @@ def load_and_split_data(args):
         #     "/home/facelesswei/code/hil-serl/outputs/classifier_data/2025-09-12-13/*.pkl",
         # "datasets/trajectories/2025-10-27/*.pkl",
         # "datasets/trajectories/2025-10-29/*.pkl",
-        "datasets/plug_with_power_cord_11_3/merged_data43328.pkl",
+        # "datasets/plug_with_power_cord_11_3/merged_data43328.pkl",
+        "datasets/trajectories/2025-11-07/*.pkl",
+        # "/home/facelesswei/code/hil-serl/datasets/trajectories/2025-10-29/merged/merged_data.pkl",
     ]
     # data_files = ["/Users/majianfei/Downloads/usb_pickup_insertion_5_11-05-02.pkl"]
 
@@ -364,8 +367,9 @@ class ActorWrapper:
             self.history_state[-1] = obs["state"]
             cat_list = []
             cat_list.extend(self.history_state[-1])
+            cat_list.extend(self.history_state[-2])
             cat_list.extend(self.history_state[-3])
-            cat_list.extend(self.history_state[-6])
+            cat_list.extend(self.history_state[-4])
             observations["state"] = np.concatenate(cat_list, axis=0).reshape(1, -1)
 
         observations = dict_data_to_torch(observations, self.image_transform)
