@@ -42,7 +42,11 @@ from rl.mappings import CONFIG_MAPPING
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("exp_name", "debug", "Name of experiment corresponding to folder.")
+flags.DEFINE_string(
+    "exp_name",
+    "plug_into_socket_with_power_cord",
+    "Name of experiment config",
+)
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_boolean("learner", False, "Whether this is a learner.")
 flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
@@ -50,11 +54,14 @@ flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_integer("port", 5188, "port")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_string(
-    "checkpoint_path", "outputs/rlpd/debug", "Path to save checkpoints."
+    "checkpoint_path",
+    "outputs/rlpd/plug_into_socket_with_power_cord_dqn",
+    "Path to save checkpoints.",
 )
 flags.DEFINE_string("bc_checkpoint_path", None, "Path to save BC checkpoints for IBRL")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_integer("training_starts", 100, "Wait")
+flags.DEFINE_integer("target_entropy", -4, "target_entropy")
 
 flags.DEFINE_boolean(
     "debug", False, "Debug mode."
@@ -149,24 +156,29 @@ def resume_data_from_checkpoint(replay_buffer, demo_buffer):
 ##############################################################################
 
 
-def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None):
+def actor(
+    agent,
+    data_store,
+    intvn_data_store,
+    env,
+    sampling_rng,
+    bc_agent=None,
+    include_o_actions=False,
+):
     """
     This is the actor loop, which runs when "--actor" is set to True.
     """
-    start_step = (
-        int(
-            os.path.basename(
-                natsorted(
-                    glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl"))
-                )[-1]
-            )[12:-4]
+    start_step = 0
+
+    if FLAGS.checkpoint_path and os.path.exists(
+        os.path.join(FLAGS.checkpoint_path, "buffer")
+    ):
+        resume_buffer_list = glob.glob(
+            os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")
         )
-        + 1
-        if FLAGS.checkpoint_path
-        and os.path.exists(FLAGS.checkpoint_path)
-        and os.path.exists(os.path.join(FLAGS.checkpoint_path, "buffer"))
-        else 0
-    )
+        if len(resume_buffer_list) > 0:
+            start_step = int(os.path.basename(natsorted(resume_buffer_list)[-1])[12:-4])
+        +1
 
     datastore_dict = {
         "actor_env": data_store,
@@ -229,6 +241,7 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
             if "right" in info:
                 info.pop("right")
 
+            o_actions = actions.copy()  # Always save original action
             # override the action with the intervention action
             if "intervene_action" in info:
                 actions = info.pop("intervene_action")
@@ -250,6 +263,9 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=None)
             )
             if "grasp_penalty" in info:
                 transition["grasp_penalty"] = info["grasp_penalty"]
+            if include_o_actions:
+                transition["o_actions"] = o_actions
+                transition["h"] = already_intervened
             data_store.insert(transition)
             transitions.append(copy.deepcopy(transition))
             if already_intervened:
@@ -301,15 +317,9 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     """
     The learner loop, which runs when "--learner" is set to True.
     """
+    resume_cp = checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
     start_step = (
-        int(
-            os.path.basename(
-                checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
-            )[11:]
-        )
-        + 1
-        if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path)
-        else 0
+        int(os.path.basename(resume_cp)[11:]) + 1 if resume_cp is not None else 0
     )
     step = start_step
 
@@ -402,6 +412,7 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
             batch = next(replay_iterator)
             demo_batch = next(demo_iterator)
             batch = concat_batches(batch, demo_batch, axis=0)
+
             agent, update_info = agent.update(
                 batch,
                 networks_to_update=train_networks_to_update,
@@ -463,8 +474,8 @@ def main(_):
     #     )
     #     bc_agent = bc_agent.replace(state=bc_ckpt)
 
-    # agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
-    agent: HybridSACAgent = make_hybrid_sac_agent(
+    agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
+        # agent: HybridSACAgent = make_hybrid_sac_agent(
         seed=FLAGS.seed,
         sample_obs=env.observation_space.sample(),
         sample_action=env.action_space.sample(),
@@ -478,8 +489,10 @@ def main(_):
             "clip_grad_norm": FLAGS.clip_grad_norm,
             "return_lr_schedule": FLAGS.return_lr_schedule,
         },
+        target_entropy=FLAGS.target_entropy,
     )
     include_grasp_penalty = True
+    include_o_actions = False # 还没测试通过
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
@@ -489,15 +502,18 @@ def main(_):
         input(
             f"Checkpoint path {FLAGS.checkpoint_path} already exists. Press Enter to resume training."
         )
-        ckpt = checkpoints.restore_checkpoint(
-            os.path.abspath(FLAGS.checkpoint_path),
-            agent.state,
-        )
-        agent = agent.replace(state=ckpt)
-        ckpt_number = os.path.basename(
-            checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
-        )[11:]
-        print_green(f"Loaded previous checkpoint at step {ckpt_number}.")
+        ckpt_path = checkpoints.latest_checkpoint(FLAGS.checkpoint_path)
+        print_green(f"Resuming from checkpoint: {ckpt_path}")
+        if ckpt_path is not None:
+            ckpt = checkpoints.restore_checkpoint(
+                os.path.abspath(FLAGS.checkpoint_path),
+                agent.state,
+            )
+            agent = agent.replace(state=ckpt)
+            ckpt_number = os.path.basename(
+                checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
+            )[11:]
+            print_green(f"Loaded previous checkpoint at step {ckpt_number}.")
 
     def create_replay_buffer_and_wandb_logger():
         replay_buffer = MemoryEfficientReplayBufferDataStore(
@@ -506,6 +522,7 @@ def main(_):
             capacity=config.replay_buffer_capacity,
             image_keys=config.image_keys,
             include_grasp_penalty=include_grasp_penalty,
+            include_o_actions=include_o_actions,
         )
         # set up wandb and logging
         wandb_logger = make_wandb_logger(
@@ -526,6 +543,7 @@ def main(_):
             capacity=config.replay_buffer_capacity,
             image_keys=config.image_keys,
             include_grasp_penalty=include_grasp_penalty,
+            include_o_actions=include_o_actions,
         )
 
         load_demo_data(demo_buffer)
@@ -550,7 +568,15 @@ def main(_):
 
         # actor loop
         print_green("starting actor loop")
-        actor(agent, data_store, intvn_data_store, env, sampling_rng, bc_agent=bc_agent)
+        actor(
+            agent,
+            data_store,
+            intvn_data_store,
+            env,
+            sampling_rng,
+            bc_agent=bc_agent,
+            include_o_actions=include_o_actions,
+        )
 
     else:
         raise NotImplementedError("Must be either a learner or an actor")

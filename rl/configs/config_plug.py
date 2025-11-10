@@ -10,6 +10,7 @@ class UREnvConfig:
         "rgb": {"dim": (1280, 720)},
         "scene": {"dim": (1280, 720)},
     }
+    # "scene": lambda img: img[225:430, 150:590],
     IMAGE_CROP = {
         # "wrist": lambda img: img[60:350, 50:590],
         "rgb": lambda img: img[250:510, 320:560],
@@ -41,8 +42,8 @@ class UREnvConfig:
     GRIPPER_CLOSE_POSE = 190
     GRIPPER_SPEED = 30
     GRIPPER_FORCE = 180
-    RANDOM_RESET = True
-    # RANDOM_RESET = False
+    # RANDOM_RESET = True
+    RANDOM_RESET = False
 
     RANDOM_XY_RANGE = 0.01
     RANDOM_RZ_RANGE = 0.1
@@ -87,9 +88,9 @@ class TrainConfig:
     discount = 0.98
     buffer_period = 1000
 
-    def get_environment(self, fake_env=False, train=True):
+    def get_environment(self, fake_env=False, debug=False):
         env_config = UREnvConfig()
-        if not train:
+        if debug:
             env_config.MAX_EPISODE_LENGTH = 1000
         env = UR_Platform_Env(fake_env=fake_env, config=env_config)
         # env = HumanControlTargetEnv(env, "1")

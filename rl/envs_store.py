@@ -166,13 +166,13 @@ class UR_Platform_Env(gym.Env):
         self._send_pos_command(self.clip_safety_box(self.nextpos))
 
         self.curr_path_length += 1
-        # dt_s = time.perf_counter() - start_time
-        # min_step_time = 1 / 30  # 30hz
-        # if dt_s < min_step_time:
-        #     print(
-        #         f"[UR_Platform_Env] sleep min_step_time: {(min_step_time - dt_s):.4f}s"
-        #     )
-        #     time.sleep(min_step_time - dt_s)
+        dt_s = time.perf_counter() - start_time
+        min_step_time = 1 / 30  # 30hz
+        if dt_s < min_step_time:
+            print(
+                f"[UR_Platform_Env] sleep min_step_time: {(min_step_time - dt_s):.4f}s"
+            )
+            time.sleep(min_step_time - dt_s)
 
         self._update_currpos()
         ob = self._get_obs()
@@ -525,12 +525,16 @@ class Fake_UR_Platform_Env(gym.Env):
         done = self.curr_path_length >= 20
         # time.sleep(0.2)
         reward = 0
+
+        info = {}
+        info["intervene_action"] = np.random.uniform(-1, 1, size=(7,))
+        info["succeed"] = reward
         return (
             copy.deepcopy(self.fake_obs),
             int(reward),
             done,
             False,
-            {"succeed": reward},
+            info,
         )
 
     def reset(self, **kwargs):

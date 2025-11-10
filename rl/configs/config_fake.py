@@ -8,7 +8,7 @@ class TrainConfig:
 
     agent: str = "drq"
     max_traj_length: int = 100
-    batch_size: int = 256
+    batch_size: int = 32
 
     max_steps: int = 1000000
     replay_buffer_capacity: int = 200000

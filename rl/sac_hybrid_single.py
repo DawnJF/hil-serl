@@ -858,6 +858,46 @@ class HybridSACAgent(flax.struct.PyTreeNode):
 
         return next_actions_c, next_actions_c_log_probs, action_d, log_prob_d, prob_d
 
+    def critic_preference_loss_fn(self, batch, rng, grad_params):
+        """
+        没有验证通过
+        Q: critic network
+        s: state batch
+        a1, a2: action batches
+        """
+
+        q1 = self.forward_critic(
+            batch["observations"],
+            batch["o_actions"][..., :-1],
+            rng=rng,
+            grad_params=grad_params,
+        )
+        # (2, batch_size, action_d_dim)
+
+        o_action_d = jnp.broadcast_to(
+            batch["o_actions"][..., -1:].astype(jnp.int16),
+            (q1.shape[0],) + batch["o_actions"][..., -1:].shape,
+        )
+
+        q1 = jnp.take_along_axis(q1, o_action_d, axis=-1).squeeze(-1)
+        q2 = self.forward_critic(
+            batch["observations"],
+            batch["actions"][..., :-1],
+            rng=rng,
+            grad_params=grad_params,
+        )
+        # q2 = q2.mean(axis=0)
+        action_d = jnp.broadcast_to(
+            batch["actions"][..., -1:].astype(jnp.int16),
+            (q2.shape[0],) + batch["actions"][..., -1:].shape,
+        )
+        q2 = jnp.take_along_axis(q2, action_d, axis=-1).squeeze(-1)
+
+        # Smooth logistic preference loss
+        loss = -jnp.log(jax.nn.sigmoid(q1 - q2) + 1e-8).mean()
+
+        return loss
+
     def critic_loss_fn(self, batch, params: Params, rng: PRNGKey):
         """classes that inherit this class can change this function"""
         batch_size = batch["rewards"].shape[0]
@@ -943,6 +983,12 @@ class HybridSACAgent(flax.struct.PyTreeNode):
             "rewards": batch["rewards"].mean(),
         }
 
+        # preference_loss = self.critic_preference_loss_fn(
+        #     batch, rng=rng, grad_params=params
+        # )
+        # info["preference_loss"] = preference_loss
+        # critic_loss += preference_loss
+
         return critic_loss, info
 
     def policy_loss_fn(self, batch, params: Params, rng: PRNGKey):
@@ -967,6 +1013,7 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         )
         # TODO mean or min
         predicted_q = predicted_qs.mean(axis=0)
+        # predicted_q = predicted_qs.min(axis=0)
 
         # chex.assert_shape(predicted_q, (batch_size,))
         chex.assert_shape(log_probs_c, (batch_size,))

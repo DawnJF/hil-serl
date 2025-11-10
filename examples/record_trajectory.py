@@ -1,8 +1,6 @@
-# 需要把环境中reset的time.sleep()注释一下   推理脚本不使用reward
-# /home/facelesswei/code/hil-serl/examples/experiments/usb_pickup_insertion/config.py  MAX_EPISODE_LENGTH = 200改为10000000
-
 import copy
 import os
+import sys
 
 from tqdm import tqdm
 import numpy as np
@@ -11,7 +9,8 @@ import datetime
 from pynput import keyboard
 import atexit
 
-from experiments.mappings import CONFIG_MAPPING
+sys.path.append(os.getcwd())
+from rl.mappings import CONFIG_MAPPING
 
 import jax
 
@@ -169,7 +168,7 @@ def collection_loop(env, save_dir, trajectories_needed):
 
 def main():
     dataset_folder = "datasets/trajectories"
-    exp_name = "usb_pickup_insertion"
+    exp_name = "open_switch"
     trajectories_needed = 500
 
     # 设置键盘监听器
@@ -178,7 +177,7 @@ def main():
     # 初始化环境
     assert exp_name in CONFIG_MAPPING, "Experiment folder not found."
     config = CONFIG_MAPPING[exp_name]()
-    env = config.get_environment()
+    env = config.get_environment(debug=True)
 
     # 创建保存目录
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")

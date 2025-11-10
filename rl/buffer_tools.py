@@ -235,6 +235,7 @@ class ReplayBuffer(Dataset):
         include_next_actions: Optional[bool] = False,
         include_label: Optional[bool] = False,
         include_grasp_penalty: Optional[bool] = False,
+        include_o_actions: Optional[bool] = False,
     ):
         if next_observation_space is None:
             next_observation_space = observation_space
@@ -261,6 +262,12 @@ class ReplayBuffer(Dataset):
 
         if include_grasp_penalty:
             dataset_dict["grasp_penalty"] = np.empty((capacity,), dtype=np.float32)
+
+        if include_o_actions:
+            dataset_dict["o_actions"] = np.empty(
+                (capacity, *action_space.shape), dtype=action_space.dtype
+            )
+            dataset_dict["h"] = np.empty((capacity,), dtype=bool)
 
         super().__init__(dataset_dict)
 
@@ -315,6 +322,7 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
         pixel_keys: Tuple[str, ...] = ("pixels",),
         include_next_actions: Optional[bool] = False,
         include_grasp_penalty: Optional[bool] = False,
+        include_o_actions: Optional[bool] = False,
     ):
         self.pixel_keys = pixel_keys
 
@@ -349,6 +357,7 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
             next_observation_space=next_observation_space,
             include_next_actions=include_next_actions,
             include_grasp_penalty=include_grasp_penalty,
+            include_o_actions=include_o_actions,
         )
 
     def insert(self, data_dict: DatasetDict):

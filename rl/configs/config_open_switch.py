@@ -3,6 +3,14 @@ import numpy as np
 import sys
 from rl.envs_store import *
 
+"""
+
+这个放弃，发现一条数据监督都学不会
+
+因为按钮需要先下再上，有一个位置没有任何信息分辨应该上还是应该下
+
+"""
+
 
 class OpenSwitchEnvConfig:
     REALSENSE_CAMERAS = {
@@ -13,14 +21,13 @@ class OpenSwitchEnvConfig:
     IMAGE_CROP = {
         "wrist": lambda img: img[20:330, 100:560],
         "rgb": lambda img: img[280:510, 150:490],
-        "scene": lambda img: img[160:460, 100:560],
+        "scene": lambda img: img[200:400, 300:400],
     }
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
 
     GRIPPER_SPEED = 10
     GRIPPER_FORCE = 10
-    RANDOM_RESET = True
-    # RANDOM_RESET = False
+    RANDOM_RESET = False
 
     RANDOM_XY_RANGE = 0.01
     RANDOM_RZ_RANGE = 0.1
@@ -45,7 +52,7 @@ class OpenSwitchEnvConfig:
     )
     RESET_POSE = np.array([*reset_xyz, *reset_quat])
     ACTION_SCALE = np.array([0.01, 0.02, 1])  # xyz, euler, gripper
-    GRIPPER_OPEN_POSE = 170
+    GRIPPER_OPEN_POSE = 212
     GRIPPER_CLOSE_POSE = 212
     MAX_EPISODE_LENGTH = 100
 
@@ -79,6 +86,8 @@ class OpenSwitchTrainConfig:
 
     def get_environment(self, fake_env=False, debug=False):
         config = OpenSwitchEnvConfig()
+        if debug:
+            config.MAX_EPISODE_LENGTH = 1000
         env = UR_Platform_Env(fake_env=fake_env, config=config)
         env = HumanRewardEnv(env)
         env = SpacemouseIntervention(env)
