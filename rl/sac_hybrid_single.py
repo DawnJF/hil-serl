@@ -936,7 +936,8 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         # Minimum Q across (subsampled) ensemble members
         target_next_min_q = target_next_qs.min(axis=0)
 
-        target_next_min_q = (target_next_min_q * next_actions_prob_d).sum(axis=-1)
+        # target_next_min_q = (target_next_min_q * next_actions_prob_d).sum(axis=-1)
+        target_next_min_q = target_next_min_q.max(axis=-1)
 
         target_next_min_q = self.select_max_q(
             target_next_min_q, batch["next_observations"], rng
@@ -1001,10 +1002,8 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         )
         actions_c, log_probs_c = action_c_dist.sample_and_log_prob(seed=sample_rng)
 
-        action_d = action_d_dist.sample(seed=rng)
         # 概率和 log 概率
         prob_d = action_d_dist.probs
-        log_prob_d = action_d_dist.log_prob(action_d)
 
         predicted_qs = self.forward_critic(
             batch["observations"],
@@ -1012,8 +1011,8 @@ class HybridSACAgent(flax.struct.PyTreeNode):
             rng=critic_rng,
         )
         # TODO mean or min
-        predicted_q = predicted_qs.mean(axis=0)
-        # predicted_q = predicted_qs.min(axis=0)
+        # predicted_q = predicted_qs.mean(axis=0)
+        predicted_q = predicted_qs.min(axis=0)
 
         # chex.assert_shape(predicted_q, (batch_size,))
         chex.assert_shape(log_probs_c, (batch_size,))
