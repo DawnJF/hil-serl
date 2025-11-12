@@ -46,12 +46,6 @@ class UR_Platform_Env(gym.Env):
         self.config = config
         self.max_episode_length = config.MAX_EPISODE_LENGTH
 
-        # convert last 3 elements from euler to quat, from size (6,) to (7,)
-        self.resetpos = (
-            np.concatenate([config.RESET_POSE[:3], euler_2_quat(config.RESET_POSE[3:])])
-            if config.RESET_POSE.shape[0] == 6
-            else config.RESET_POSE
-        )
         self.gripper_open_pose = config.GRIPPER_OPEN_POSE
         self.gripper_close_pose = config.GRIPPER_CLOSE_POSE
         self.gripper_speed = config.GRIPPER_SPEED

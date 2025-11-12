@@ -26,7 +26,7 @@ from experiments.usb_pickup_insertion.wrapper import (
 from experiments.usb_pickup_insertion.ur_wrapper import UR_Platform_Env
 
 
-class UREnvConfig:
+class UREnvConfig(DefaultEnvConfig):
     REALSENSE_CAMERAS = {
         # "wrist": {"dim": (1280, 720)},
         "rgb": {"dim": (1280, 720)},
@@ -52,10 +52,10 @@ class UREnvConfig:
     # For plug
     reset_quat = np.array(
         [
-            0.9824031954007385,
-            0.1864148915326869,
-            0.010644197470452267,
-            0.004488980004955199,
+            0.9797053086774433,
+            0.20010938213011484,
+            0.010719838360479872,
+            0.004339170227621892,
         ]
     )
     RESET_POSE = np.array([*reset_xyz, *reset_quat])
@@ -80,7 +80,7 @@ class UREnvConfig:
     MAX_EPISODE_LENGTH = 250
 
 
-class TrainConfig:
+class TrainConfig(DefaultTrainingConfig):
 
     agent: str = "drq"
     max_traj_length: int = 100

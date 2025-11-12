@@ -10,7 +10,8 @@ from pynput import keyboard
 import atexit
 
 sys.path.append(os.getcwd())
-from rl.mappings import CONFIG_MAPPING
+# from rl.mappings import CONFIG_MAPPING
+from experiments.mappings import CONFIG_MAPPING
 
 import jax
 

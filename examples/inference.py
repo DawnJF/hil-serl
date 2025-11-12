@@ -3,6 +3,7 @@
 import glob
 import time
 import jax
+
 if not hasattr(jax, "tree_map"):
     jax.tree_map = jax.tree.map
 if not hasattr(jax, "tree_leaves"):
@@ -55,7 +56,6 @@ flags.DEFINE_boolean(
     "debug", False, "Debug mode."
 )  # debug mode will disable wandb logging
 
-flags.DEFINE_string("wandb_mode", "online", "wandb mode, online or offline, if debug is true, mode is disabled.")
 
 # for optimizer config
 flags.DEFINE_float("learning_rate", 3e-4, "learning rate")
@@ -73,6 +73,7 @@ sharding = jax.sharding.PositionalSharding(devices)
 
 def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
+
 
 def inference(agent, env, sampling_rng):
     success_counter = 0
@@ -92,9 +93,7 @@ def inference(agent, env, sampling_rng):
         while not done:
             sampling_rng, key = jax.random.split(sampling_rng)
             actions = agent.sample_actions(
-                observations=jax.device_put(obs),
-                argmax=True,
-                seed=key
+                observations=jax.device_put(obs), argmax=True, seed=key
             )
             actions = np.asarray(jax.device_get(actions))
 
@@ -128,60 +127,33 @@ def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     env = config.get_environment(
         fake_env=FLAGS.learner,
-        save_video=FLAGS.save_video,
-        classifier=True,
     )
     env = RecordEpisodeStatistics(env)
 
     rng, sampling_rng = jax.random.split(rng)
     env.reset()
-    
-    if config.setup_mode == 'single-arm-fixed-gripper' or config.setup_mode == 'dual-arm-fixed-gripper':   
-        agent: SACAgent = make_sac_pixel_agent(
-            seed=FLAGS.seed,
-            sample_obs=env.observation_space.sample(),
-            sample_action=env.action_space.sample(),
-            image_keys=config.image_keys,
-            encoder_type=config.encoder_type,
-            discount=config.discount,
-        )
-        include_grasp_penalty = False
-    elif config.setup_mode == 'single-arm-learned-gripper':
-        agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
-            seed=FLAGS.seed,
-            sample_obs=env.observation_space.sample(),
-            sample_action=env.action_space.sample(),
-            image_keys=config.image_keys,
-            encoder_type=config.encoder_type,
-            discount=config.discount,
-            optimizer_configs={
-                "learning_rate": FLAGS.learning_rate,
-                "warmup_steps": FLAGS.warmup_steps,
-                "cosine_decay_steps": FLAGS.cosine_decay_steps,
-                "weight_decay": FLAGS.weight_decay,
-                "clip_grad_norm": FLAGS.clip_grad_norm,
-                "return_lr_schedule": FLAGS.return_lr_schedule
-            }
-        )
-        include_grasp_penalty = True
-    elif config.setup_mode == 'dual-arm-learned-gripper':
-        agent: SACAgentHybridDualArm = make_sac_pixel_agent_hybrid_dual_arm(
-            seed=FLAGS.seed,
-            sample_obs=env.observation_space.sample(),
-            sample_action=env.action_space.sample(),
-            image_keys=config.image_keys,
-            encoder_type=config.encoder_type,
-            discount=config.discount,
-        )
-        include_grasp_penalty = True
-    else:
-        raise NotImplementedError(f"Unknown setup mode: {config.setup_mode}")
+
+    agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
+        seed=FLAGS.seed,
+        sample_obs=env.observation_space.sample(),
+        sample_action=env.action_space.sample(),
+        image_keys=config.image_keys,
+        encoder_type=config.encoder_type,
+        discount=config.discount,
+        optimizer_configs={
+            "learning_rate": FLAGS.learning_rate,
+            "warmup_steps": FLAGS.warmup_steps,
+            "cosine_decay_steps": FLAGS.cosine_decay_steps,
+            "weight_decay": FLAGS.weight_decay,
+            "clip_grad_norm": FLAGS.clip_grad_norm,
+            "return_lr_schedule": FLAGS.return_lr_schedule,
+        },
+    )
+    include_grasp_penalty = True
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
-    agent = jax.device_put(
-        jax.tree_map(jnp.array, agent), sharding.replicate()
-    )
+    agent = jax.device_put(jax.tree_map(jnp.array, agent), sharding.replicate())
 
     sampling_rng = jax.device_put(sampling_rng, sharding.replicate())
 
@@ -192,6 +164,7 @@ def main(_):
         env,
         sampling_rng,
     )
+
 
 if __name__ == "__main__":
     app.run(main)

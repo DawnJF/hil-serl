@@ -20,6 +20,7 @@ from PIL import Image
 sys.path.append(os.getcwd())
 sys.path.append("/home/facelesswei/code/hil-serl")
 sys.path.append("/home/facelesswei/code/hil-serl/examples")
+from examples.experiments.mappings import CONFIG_MAPPING
 from examples.experiments.usb_pickup_insertion.config import (
     OpenSwitchEnvConfig,
     OpenSwitchTrainConfig,
@@ -163,11 +164,10 @@ def test_dataset():
 
 
 def replay_dataset():
-    path = "datasets/trajectories/2025-10-27/traj_19-22-40_7.pkl"
+    path = "/home/facelesswei/code/hil-serl/datasets/trajectories/2025-11-12/traj_10-35-09_1.pkl"
 
     proprio_keys = ["tcp_pose", "gripper_pose"]
     env = UR_Platform_Env(config=OpenSwitchEnvConfig())
-    # env = SpacemouseIntervention(env)
     env = RelativeFrame(env)
     env = Quat2EulerWrapper(env)
     env = SERLObsWrapper(env, proprio_keys=proprio_keys)
@@ -215,9 +215,19 @@ def test_train_config():
         obs, reward, done, truncated, info = env.step(action)
 
 
+def env_reset():
+    config = CONFIG_MAPPING["plug_into_socket_with_power_cord"]()
+
+    env = config.get_environment()
+
+    obs, _ = env.reset()
+    env.close()
+
+
 if __name__ == "__main__":
 
     # test_Env()
+    env_reset()
     # test_dataset()
     # replay_dataset()
-    test_train_config()
+    # test_train_config()

@@ -133,7 +133,7 @@ class UREnvConfig(DefaultEnvConfig):
 
 
 class OpenSwitchEnvConfig(UREnvConfig):
-    # RANDOM_RESET = False
+    RANDOM_RESET = False
     # reset_xyz = np.array([-0.6, -0.28, 0.1])
     reset_xyz = np.array([-0.55, -0.5, 0.14])
     reset_quat = np.array(

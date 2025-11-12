@@ -251,7 +251,7 @@ class HumanControlTargetEnv(gym.Wrapper):
         super().__init__(env)
         self.info = info
 
-        t_key = "p" if info == "1" else "o"
+        t_key = "n"
 
         from pynput import keyboard
 

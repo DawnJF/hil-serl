@@ -271,6 +271,10 @@ class SpacemouseIntervention(gym.ActionWrapper):
         info["right"] = self.right
         return obs, rew, done, truncated, info
 
+    def close(self):
+        self.expert.close()
+        return self.env.close()
+
 
 class DualSpacemouseIntervention(gym.ActionWrapper):
     def __init__(self, env, action_indices=None, gripper_enabled=True):

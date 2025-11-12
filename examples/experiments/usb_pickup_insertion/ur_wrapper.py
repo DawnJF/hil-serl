@@ -130,10 +130,6 @@ class UR_Platform_Env(gym.Env):
 
         self.gripper_sleep = config.GRIPPER_SLEEP
 
-        # convert last 3 elements from euler to quat, from size (6,) to (7,)
-        self.resetpos = np.concatenate(
-            [config.RESET_POSE[:3], euler_2_quat(config.RESET_POSE[3:])]
-        ) if config.RESET_POSE.shape[0] == 6 else config.RESET_POSE
         self.gripper_open_pose = config.GRIPPER_OPEN_POSE
         self.gripper_close_pose = config.GRIPPER_CLOSE_POSE
         self.gripper_speed = config.GRIPPER_SPEED
@@ -242,7 +238,11 @@ class UR_Platform_Env(gym.Env):
         #     Rotation.from_euler("xyz", action[3:6] * self.action_scale[1])
         #     * Rotation.from_quat(self.currpos[3:])
         # ).as_quat()
-        self.nextpos[3:] = euler_2_quat(self._RESET_POSE[3:]) if self._RESET_POSE.shape[0] == 6 else self._RESET_POSE[3:]
+        self.nextpos[3:] = (
+            euler_2_quat(self._RESET_POSE[3:])
+            if self._RESET_POSE.shape[0] == 6
+            else self._RESET_POSE[3:]
+        )
 
         gripper_action = action[6] * self.action_scale[2]
 
@@ -350,22 +350,6 @@ class UR_Platform_Env(gym.Env):
             time.sleep(7)
             return
 
-        # Perform Carteasian reset
-        if self.randomreset:  # randomize reset position in xy plane
-            reset_pose = self.resetpos.copy()
-            reset_pose[:2] += np.random.uniform(
-                -self.random_xy_range, self.random_xy_range, (2,)
-            )
-            euler_random = self._RESET_POSE[3:].copy()
-            euler_random[-1] += np.random.uniform(
-                -self.random_rz_range, self.random_rz_range
-            )
-            reset_pose[3:] = euler_2_quat(euler_random)
-            self.interpolate_move(reset_pose, timeout=1)
-        else:
-            reset_pose = self.resetpos.copy()
-            self.interpolate_move(reset_pose, timeout=1)
-
     def reset(self, joint_reset=False, **kwargs):
         print("[UR_Platform_Env] Resetting robot")
         self.last_gripper_act = time.time()
@@ -409,12 +393,14 @@ class UR_Platform_Env(gym.Env):
             print(f"[DEBUG] _send_g {pos}({self.currgripper}), {time_check}")
 
             if (pos <= -0.5) and time_check:  # close gripper
-                self.client.post({
-                    "type": "close_gripper", 
-                    "arr": self.gripper_close_pose,
-                    "gripper_speed": self.gripper_speed,
-                    "gripper_force": self.gripper_force
-                })
+                self.client.post(
+                    {
+                        "type": "close_gripper",
+                        "arr": self.gripper_close_pose,
+                        "gripper_speed": self.gripper_speed,
+                        "gripper_force": self.gripper_force,
+                    }
+                )
                 self.last_gripper_act = time.time()
                 # time.sleep(self.gripper_sleep)
             elif (
@@ -423,10 +409,9 @@ class UR_Platform_Env(gym.Env):
                 # and (self.currgripper > 0.25)
                 and ((time.time() - self.last_gripper_act) > self.gripper_sleep)
             ):  # open gripper
-                self.client.post({
-                    "type": "open_gripper",
-                    "arr": self.gripper_open_pose
-                })
+                self.client.post(
+                    {"type": "open_gripper", "arr": self.gripper_open_pose}
+                )
                 # self.last_gripper_act = time.time()
                 # time.sleep(self.gripper_sleep)
             else:
