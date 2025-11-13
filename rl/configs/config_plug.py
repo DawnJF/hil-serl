@@ -42,8 +42,7 @@ class UREnvConfig:
     GRIPPER_CLOSE_POSE = 190
     GRIPPER_SPEED = 30
     GRIPPER_FORCE = 180
-    # RANDOM_RESET = True
-    RANDOM_RESET = False
+    RANDOM_RESET = True
 
     RANDOM_XY_RANGE = 0.01
     RANDOM_RZ_RANGE = 0.1
@@ -79,8 +78,7 @@ class TrainConfig:
         "rgb",
         "scene",
     ]
-    # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
-    proprio_keys = ["tcp_pose", "gripper_pose"]
+    proprio_keys = ["tcp_pose", "tcp_force", "gripper_pose"]
     checkpoint_period = 1000
     cta_ratio = 2
     random_steps = 0

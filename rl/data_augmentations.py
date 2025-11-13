@@ -35,6 +35,64 @@ def batched_random_crop(img, rng, *, padding, num_batch_dims: int = 1):
     img = jnp.reshape(img, original_shape)
     return img
 
+
+# 新增
+@partial(
+    jax.jit,
+    static_argnames=(
+        "padding",
+        "num_batch_dims",
+        "brightness",
+        "contrast",
+        "noise_std",
+    ),
+)
+def batched_augment(
+    img,
+    rng,
+    *,
+    padding=4,
+    num_batch_dims: int = 1,
+    brightness=0.2,
+    contrast=0.2,
+    noise_std=0.01,
+):
+    """对一批图像进行随机数据增强，包括裁剪、亮度/对比度扰动、翻转、噪声."""
+
+    original_shape = img.shape
+    img = jnp.reshape(img, (-1, *img.shape[num_batch_dims:]))  # flatten batch
+    rngs = jax.random.split(rng, img.shape[0])
+
+    def augment_single(image, rng):
+        rng_crop, rng_brightness, rng_contrast, rng_noise = jax.random.split(rng, 5)
+
+        # ---- 1️⃣ 随机裁剪 ----
+        image = random_crop(image, rng_crop, padding=padding)
+
+        # ---- 3️⃣ 随机亮度调整 ----
+        brightness_factor = 1.0 + jax.random.uniform(
+            rng_brightness, (), minval=-brightness, maxval=brightness
+        )
+        image = image * brightness_factor
+
+        # ---- 4️⃣ 随机对比度调整 ----
+        mean = jnp.mean(image, axis=(0, 1), keepdims=True)
+        contrast_factor = 1.0 + jax.random.uniform(
+            rng_contrast, (), minval=-contrast, maxval=contrast
+        )
+        image = (image - mean) * contrast_factor + mean
+
+        # ---- 5️⃣ 添加少量高斯噪声 ----
+        noise = jax.random.normal(rng_noise, image.shape) * noise_std
+        image = image + noise
+
+        return image
+
+    img = jax.vmap(augment_single, in_axes=(0, 0), out_axes=0)(img, rngs)
+    img = jnp.reshape(img, original_shape)
+    return img
+
+
 def resize(image, image_dim):
     assert len(image_dim) == 2
     new_shape = list(image.shape)
@@ -240,7 +298,7 @@ def color_transform(
     to_grayscale_prob,
     color_jitter_prob,
     apply_prob,
-    shuffle
+    shuffle,
 ):
     """Applies color jittering to a single image."""
     apply_rng, transform_rng = jax.random.split(rng)

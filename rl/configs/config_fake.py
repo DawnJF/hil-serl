@@ -26,7 +26,7 @@ class TrainConfig:
         # "scene",
     ]
     # proprio_keys = ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]
-    proprio_keys = ["tcp_pose", "gripper_pose"]
+    proprio_keys = ["tcp_pose", "tcp_force", "gripper_pose"]
     checkpoint_period = 1000
     cta_ratio = 2
     random_steps = 0
@@ -35,12 +35,11 @@ class TrainConfig:
     buffer_period = 1000
 
     def get_environment(self, fake_env=False, train=True):
-        proprio_keys = ["tcp_pose", "gripper_pose"]
 
         env = Fake_UR_Platform_Env()
         env = RelativeFrame(env, include_relative_pose=False)
         env = Quat2EulerWrapper(env)
-        env = SERLObsWrapper(env, proprio_keys)
+        env = SERLObsWrapper(env, self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
         env = GripperPenaltyWrapper(env, penalty=-0.02)
         return env

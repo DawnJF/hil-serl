@@ -14,7 +14,6 @@ from gymnasium.spaces import flatten_space, flatten
 from PIL import Image
 
 sys.path.append(os.getcwd())
-from examples.experiments.usb_pickup_insertion.wrapper import HumanRewardEnv
 from serl_robot_infra.franka_env.utils.transformations import (
     construct_adjoint_matrix,
     construct_homogeneous_matrix,
@@ -82,7 +81,7 @@ class UR_Platform_Env(gym.Env):
                         "tcp_pose": gym.spaces.Box(-np.inf, np.inf, shape=(7,)),
                         # "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
                         "gripper_pose": gym.spaces.Box(-1, 1, shape=(1,)),
-                        # "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
                         # "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
                     }
                 ),
@@ -138,7 +137,7 @@ class UR_Platform_Env(gym.Env):
         start_time = time.perf_counter()
         action = np.clip(action, self.action_space.low, self.action_space.high)
         xyz_delta = action[:3]
-        print(f"self.currpos: {self.currpos}")
+        # print(f"[DEBUG] self.currpos: {self.currpos}")
 
         self.nextpos = self.currpos.copy()
         # print(f"delta action: {xyz_delta} :  {xyz_delta * self.action_scale[0]}")
@@ -162,7 +161,7 @@ class UR_Platform_Env(gym.Env):
 
         self.curr_path_length += 1
         dt_s = time.perf_counter() - start_time
-        min_step_time = 1 / 60  # 60hz
+        min_step_time = 1 / 30  # 30hz
         if dt_s < min_step_time:
             print(
                 f"[UR_Platform_Env] sleep min_step_time: {(min_step_time - dt_s):.4f}s"
@@ -267,7 +266,7 @@ class UR_Platform_Env(gym.Env):
 
         if mode == "binary":
 
-            print(f"[DEBUG] _send_g {pos}({self.currgripper})")
+            # print(f"[DEBUG] _send_g {pos}({self.currgripper})")
 
             if pos <= -0.5:  # close gripper
                 self.client.post(
@@ -297,7 +296,7 @@ class UR_Platform_Env(gym.Env):
         self.currpos = np.array(ps["pose"])
         self.currgripper = np.array(ps["gripper"])
         self.curr_force = np.array(ps["force"])
-        print(f"[DEBUG] curr_force: {self.curr_force}")
+        # print(f"[DEBUG] curr_force: {self.curr_force}")
 
         self.cap = ps["obs"]
         if "reward" in ps["obs"]:
@@ -310,6 +309,7 @@ class UR_Platform_Env(gym.Env):
         images = self.get_im()
         state_observation = {
             "tcp_pose": self.currpos,
+            "tcp_force": self.curr_force,
             "gripper_pose": self.currgripper,
         }
         return copy.deepcopy(dict(images=images, state=state_observation))
@@ -460,10 +460,8 @@ class Fake_UR_Platform_Env(gym.Env):
                         "tcp_pose": gym.spaces.Box(
                             -np.inf, np.inf, shape=(7,)
                         ),  # xyz + quat
-                        "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
                         "gripper_pose": gym.spaces.Box(-1, 1, shape=(1,)),
-                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
-                        "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
+                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
                     }
                 ),
                 "images": gym.spaces.Dict(
@@ -485,6 +483,7 @@ class Fake_UR_Platform_Env(gym.Env):
         }
         state_observation = {
             "tcp_pose": np.array([0, 0, 0, 0, 0, 0, 1]),
+            "tcp_force": np.zeros((6,)),
             "gripper_pose": np.zeros((1,)),
         }
         self.fake_obs = dict(images=images, state=state_observation)
@@ -659,11 +658,20 @@ class SERLObsWrapper(gym.ObservationWrapper):
         )
 
     def observation(self, obs):
+        proprio_list = []
+        for key in self.proprio_keys:
+            val = np.array(obs["state"][key], dtype=np.float32)
+            # 如果是标量，变成 shape (1,)
+            if val.ndim == 0:
+                val = np.expand_dims(val, 0)
+            assert val.ndim == 1
+
+            proprio_list.append(val)
+
+        proprio = np.concatenate(proprio_list, axis=-1)
+
         obs = {
-            "state": flatten(
-                self.proprio_space,
-                {key: obs["state"][key] for key in self.proprio_keys},
-            ),
+            "state": proprio,
             **(obs["images"]),
         }
         return obs
@@ -771,16 +779,94 @@ class GripperPenaltyWrapper(gym.Wrapper):
             if len(action) == 7:
                 info["intervene_action"] = [*action[:3], *action[-1:]]
 
-        if (action[-1] < -0.5 and self.last_gripper_pos > 0.9) or (
-            action[-1] > 0.5 and self.last_gripper_pos < 0.9
-        ):
-            info["grasp_penalty"] = self.penalty
-        else:
-            info["grasp_penalty"] = 0.0
+        info["grasp_penalty"] = 0.0
+        if action[-1] < -0.5:  # close gripper
+            if self.last_gripper_pos == 1:
+                print_color(
+                    f"[GripperPenaltyWrapper] penalty {self.penalty} ({self.last_gripper_pos}:{action[-1]})"
+                )
+                info["grasp_penalty"] = self.penalty
 
-        # self.last_gripper_pos = observation["state"][0, 0]
-        self.last_gripper_pos = action[-1]
+        elif action[-1] > 0.5:  # open gripper
+            if self.last_gripper_pos == 0:
+                print_color(
+                    f"[GripperPenaltyWrapper] penalty {self.penalty} ({self.last_gripper_pos}:{action[-1]})"
+                )
+                info["grasp_penalty"] = self.penalty
+        else:
+            pass
+
+        self.last_gripper_pos = observation["state"][0, -1]
         return observation, reward, terminated, truncated, info
+
+
+class HumanRewardEnv(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+        from pynput import keyboard
+
+        self.success_key = False
+        self.failure_key = False
+        self.bad_key = False
+
+        def on_press(key):
+            try:
+                if str(key) == "Key.space":
+                    self._set_success()
+                elif str(key) == "Key.ctrl_r":
+                    self._set_failure()
+                elif key.char == ".":
+                    self._set_bad()
+            except AttributeError:
+                pass
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+
+    def _set_success(self):
+        print_color("Success key Pressed")
+        self.success_key = True
+
+    def _set_failure(self):
+        print_color("Failure key Pressed")
+        self.failure_key = True
+
+    def _set_bad(self):
+        print_color("Bad key Pressed")
+        self.bad_key = True
+
+    def step(self, action):
+        obs, reward, done, truncated, info = self.env.step(action)
+
+        if self.success_key:
+            self.success_key = False
+            reward = 1.0
+            done = True
+            info["succeed"] = reward
+        elif self.failure_key:
+            self.failure_key = False
+            reward = -0.2
+            done = True
+        elif self.bad_key:
+            self.bad_key = False
+            reward = -0.1
+            done = False
+        else:
+            reward = 0.0 if int(reward) == 0 else reward
+
+        return obs, reward, done, truncated, info
+
+    def reset(self, **kwargs):
+        self.bad_key = False
+        self.success_key = False
+        self.failure_key = False
+        return self.env.reset(**kwargs)
+
+    def close(self):
+        if hasattr(self, "listener"):
+            self.listener.stop()
+        return self.env.close()
 
 
 def get_fake_environment():

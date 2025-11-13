@@ -233,7 +233,7 @@ class SpacemouseIntervention(gym.ActionWrapper):
         intervened = False
 
         if np.linalg.norm(expert_a) > 0.001:
-            print("SpacemouseIntervention intervened")
+            # print("SpacemouseIntervention intervened")
             intervened = True
 
         if self.gripper_enabled:

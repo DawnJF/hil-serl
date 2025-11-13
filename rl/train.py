@@ -60,7 +60,7 @@ flags.DEFINE_string(
 )
 flags.DEFINE_string("bc_checkpoint_path", None, "Path to save BC checkpoints for IBRL")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
-flags.DEFINE_integer("training_starts", 100, "Wait")
+flags.DEFINE_integer("training_starts", 500, "Wait")
 flags.DEFINE_integer("target_entropy", -4, "target_entropy")
 
 flags.DEFINE_boolean(
@@ -236,6 +236,8 @@ def actor(
         with timer.context("step_env"):
 
             next_obs, reward, done, truncated, info = env.step(actions)
+            if reward != 0:
+                print_green(f"[Actor] reward: {reward}")
             if "left" in info:
                 info.pop("left")
             if "right" in info:
@@ -266,11 +268,17 @@ def actor(
             if include_o_actions:
                 transition["o_actions"] = o_actions
                 transition["h"] = already_intervened
-            data_store.insert(transition)
-            transitions.append(copy.deepcopy(transition))
+
             if already_intervened:
                 intvn_data_store.insert(transition)
                 demo_transitions.append(copy.deepcopy(transition))
+                if len(intvn_data_store) > FLAGS.training_starts:
+                    # 没有给demo数据的时候，前面遥操的数据也不要加入replay buffer
+                    data_store.insert(transition)
+                    transitions.append(copy.deepcopy(transition))
+            else:
+                data_store.insert(transition)
+                transitions.append(copy.deepcopy(transition))
 
             obs = next_obs
             if done or truncated:
@@ -341,23 +349,23 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     server.register_data_store("actor_env_intvn", demo_buffer)
     server.start(threaded=True)
 
+    print_green(f"waiting for demo buffer {len(demo_buffer)} / {FLAGS.training_starts}")
+    while len(demo_buffer) < FLAGS.training_starts:
+        time.sleep(1)
+
     # Loop to wait until replay_buffer is filled
     pbar = tqdm.tqdm(
-        total=FLAGS.training_starts,
+        total=100,
         initial=len(replay_buffer),
         desc="Filling up replay buffer",
         position=0,
         leave=True,
     )
-    while len(replay_buffer) < FLAGS.training_starts:
+    while len(replay_buffer) < 100:
         pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
         time.sleep(1)
     pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
     pbar.close()
-
-    print_green(f"waiting for demo buffer {len(demo_buffer)} / {FLAGS.training_starts}")
-    while len(demo_buffer) < FLAGS.training_starts:
-        time.sleep(1)
 
     # send the initial network to the actor
     server.publish_network(agent.state.params)
@@ -492,7 +500,7 @@ def main(_):
         target_entropy=FLAGS.target_entropy,
     )
     include_grasp_penalty = True
-    include_o_actions = False  # 还没测试通过
+    include_o_actions = True  # 还没测试通过
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives

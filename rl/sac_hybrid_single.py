@@ -203,6 +203,53 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
 
         return next_actions, next_actions_log_probs
 
+    def _critic_preference_loss(self, batch, rng, grad_params):
+        """
+        critic 直接替换成对比学习的loss，非常有效，速度提升5倍以上
+        感觉可以用在PPO上
+
+        s: state batch
+        a1, a2: action batches
+        """
+
+        q1 = self.forward_critic(
+            batch["observations"],
+            batch["o_actions"][..., :-1],
+            rng=rng,
+            grad_params=grad_params,
+        )
+
+        q2 = self.forward_critic(
+            batch["observations"],
+            batch["actions"][..., :-1],
+            rng=rng,
+            grad_params=grad_params,
+        )
+
+        # Smooth logistic preference loss
+        loss = -jnp.log(jax.nn.sigmoid(q2 - q1) + 1e-8).mean()
+
+        info = {
+            "critic_loss": loss,
+            "o_values": jnp.mean(q1),
+            "values": jnp.mean(q2),
+        }
+
+        return loss, info
+
+    def critic_preference_only_loss_fn(self, batch, params: Params, rng: PRNGKey):
+        """classes that inherit this class can change this function"""
+
+        rng, next_action_sample_key = jax.random.split(rng)
+
+        critic_loss, info = self._critic_preference_loss(
+            batch,
+            rng=next_action_sample_key,
+            grad_params=params,
+        )
+
+        return critic_loss, info
+
     def critic_loss_fn(self, batch, params: Params, rng: PRNGKey):
         """classes that inherit this class can change this function"""
         batch_size = batch["rewards"].shape[0]
@@ -376,6 +423,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
     def loss_fns(self, batch):
         return {
             "critic": partial(self.critic_loss_fn, batch),
+            # "critic": partial(self.critic_preference_only_loss_fn, batch),
             "grasp_critic": partial(self.grasp_critic_loss_fn, batch),
             "actor": partial(self.policy_loss_fn, batch),
             "temperature": partial(self.temperature_loss_fn, batch),
@@ -713,6 +761,10 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         return agent
 
 
+def gripper_to_index(pos):
+    return jnp.where(pos >= 0.5, 2, jnp.where(pos <= -0.5, 0, 1))
+
+
 class HybridSACAgent(flax.struct.PyTreeNode):
     """
     Online actor-critic supporting several different algorithms depending on configuration:
@@ -875,7 +927,7 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         # (2, batch_size, action_d_dim)
 
         o_action_d = jnp.broadcast_to(
-            batch["o_actions"][..., -1:].astype(jnp.int16),
+            gripper_to_index(batch["o_actions"][..., -1:]),
             (q1.shape[0],) + batch["o_actions"][..., -1:].shape,
         )
 
@@ -888,13 +940,13 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         )
         # q2 = q2.mean(axis=0)
         action_d = jnp.broadcast_to(
-            batch["actions"][..., -1:].astype(jnp.int16),
+            gripper_to_index(batch["actions"][..., -1:]),
             (q2.shape[0],) + batch["actions"][..., -1:].shape,
         )
         q2 = jnp.take_along_axis(q2, action_d, axis=-1).squeeze(-1)
 
         # Smooth logistic preference loss
-        loss = -jnp.log(jax.nn.sigmoid(q1 - q2) + 1e-8).mean()
+        loss = -jnp.log(jax.nn.sigmoid(q2 - q1) + 1e-8).mean()
 
         return loss
 
@@ -904,7 +956,7 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         # Extract continuous actions for critic
         actions = batch["actions"]
         actions_c = actions[..., :-1]
-        action_d = actions[..., -1:] + 1  # Cast env action from [-1, 1] to {0, 1, 2}
+        action_d = actions[..., -1:]
 
         rng, next_action_sample_key = jax.random.split(rng)
         (
@@ -936,6 +988,7 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         # Minimum Q across (subsampled) ensemble members
         target_next_min_q = target_next_qs.min(axis=0)
 
+        # TODO
         # target_next_min_q = (target_next_min_q * next_actions_prob_d).sum(axis=-1)
         target_next_min_q = target_next_min_q.max(axis=-1)
 
@@ -958,7 +1011,6 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         predicted_qs = self.forward_critic(
             batch["observations"], actions_c, rng=rng, grad_params=params
         )
-        # predicted_qs = jnp.take(predicted_qs, action_d.astype(jnp.int16), axis=-1)
 
         # 扩展 action_d 到 (2, 256, 1)，让它能广播到第一个维度 (Q网络数量)
         action_d_expanded = jnp.broadcast_to(
@@ -966,8 +1018,9 @@ class HybridSACAgent(flax.struct.PyTreeNode):
         )  # (2, 256, 1)
 
         # 在最后一维 (axis=2) 上选择对应离散动作的 Q 值 (2, 256)
+        action_d_index = gripper_to_index(action_d_expanded)
         predicted_qs = jnp.take_along_axis(
-            predicted_qs, action_d_expanded.astype(jnp.int16), axis=2
+            predicted_qs, action_d_index, axis=2
         ).squeeze(-1)
 
         chex.assert_shape(
@@ -1011,8 +1064,8 @@ class HybridSACAgent(flax.struct.PyTreeNode):
             rng=critic_rng,
         )
         # TODO mean or min
-        # predicted_q = predicted_qs.mean(axis=0)
-        predicted_q = predicted_qs.min(axis=0)
+        predicted_q = predicted_qs.mean(axis=0)
+        # predicted_q = predicted_qs.min(axis=0)
 
         # chex.assert_shape(predicted_q, (batch_size,))
         chex.assert_shape(log_probs_c, (batch_size,))
@@ -1147,7 +1200,7 @@ class HybridSACAgent(flax.struct.PyTreeNode):
             ee_actions = dist_c.sample(seed=seed)
 
         # Select grasp actions
-        grasp_action = dist_d.mode().astype(jnp.int16)
+        grasp_action = dist_d.mode()
         grasp_action = grasp_action - 1  # Mapping back to {-1, 0, 1}
 
         return jnp.concatenate([ee_actions, grasp_action[..., None]], axis=-1)
