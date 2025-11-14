@@ -51,13 +51,14 @@ flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_boolean("learner", False, "Whether this is a learner.")
 flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
-flags.DEFINE_integer("port", 5188, "port")
+flags.DEFINE_integer("port", 5088, "port")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_string(
     "checkpoint_path",
     "outputs/rlpd/plug_into_socket_with_power_cord_dqn",
     "Path to save checkpoints.",
 )
+flags.DEFINE_string("wandb_name", "debug", "Name of wandb")
 flags.DEFINE_string("bc_checkpoint_path", None, "Path to save BC checkpoints for IBRL")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_integer("training_starts", 500, "Wait")
@@ -500,7 +501,7 @@ def main(_):
         target_entropy=FLAGS.target_entropy,
     )
     include_grasp_penalty = True
-    include_o_actions = True  # 还没测试通过
+    include_o_actions = True
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
@@ -535,7 +536,7 @@ def main(_):
         # set up wandb and logging
         wandb_logger = make_wandb_logger(
             project="hil-serl",
-            description=FLAGS.exp_name,
+            description=FLAGS.wandb_name,
             debug=FLAGS.debug,
             mode=FLAGS.wandb_mode,
             output_dir=FLAGS.wandb_output_dir,

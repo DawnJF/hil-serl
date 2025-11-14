@@ -99,4 +99,5 @@ class TrainConfig:
         env = SERLObsWrapper(env, proprio_keys=self.proprio_keys)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
         env = GripperPenaltyWrapper(env, penalty=-0.04)
+        env = Action7to4Wrapper(env)
         return env

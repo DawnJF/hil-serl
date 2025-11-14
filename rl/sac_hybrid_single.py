@@ -308,6 +308,18 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         chex.assert_equal_shape([predicted_qs, target_qs])
         critic_loss = jnp.mean((predicted_qs - target_qs) ** 2)
 
+        """
+        效果不好（一个小时左右）， 感觉是 RL 学的太慢了， preference 权重太大了
+
+        preference_loss = self._critic_preference_loss(
+            batch,
+            rng=rng,
+            grad_params=params,
+        )[0]
+
+        # critic_loss += preference_loss
+        """
+
         info = {
             "critic_loss": critic_loss,
             "predicted_qs": jnp.mean(predicted_qs),
@@ -377,6 +389,36 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
 
         return grasp_critic_loss, info
 
+    def grasp_critic_preference_loss_fn(self, batch, params: Params, rng: PRNGKey):
+        """classes that inherit this class can change this function"""
+
+        batch_size = batch["rewards"].shape[0]
+        grasp_action = jnp.round(batch["actions"][..., -1]).astype(jnp.int16) + 1
+
+        grasp_action_o = jnp.round(batch["o_actions"][..., -1]).astype(jnp.int16) + 1
+
+        predicted_grasp_qs = self.forward_grasp_critic(
+            batch["observations"],
+            rng=rng,
+            grad_params=params,
+        )
+
+        chex.assert_shape(predicted_grasp_qs, (batch_size, 3))
+
+        q2 = predicted_grasp_qs[jnp.arange(batch_size), grasp_action]
+        q1 = predicted_grasp_qs[jnp.arange(batch_size), grasp_action_o]
+
+        # Smooth logistic preference loss
+        loss = -jnp.log(jax.nn.sigmoid(q2 - q1) + 1e-8).mean()
+
+        info = {
+            "grasp_critic_loss": loss,
+            "grasp_o_values": jnp.mean(q1),
+            "grasp_values": jnp.mean(q2),
+        }
+
+        return loss, info
+
     def policy_loss_fn(self, batch, params: Params, rng: PRNGKey):
         batch_size = batch["rewards"].shape[0]
         temperature = self.forward_temperature()
@@ -425,6 +467,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             "critic": partial(self.critic_loss_fn, batch),
             # "critic": partial(self.critic_preference_only_loss_fn, batch),
             "grasp_critic": partial(self.grasp_critic_loss_fn, batch),
+            # "grasp_critic": partial(self.grasp_critic_preference_loss_fn, batch),
             "actor": partial(self.policy_loss_fn, batch),
             "temperature": partial(self.temperature_loss_fn, batch),
         }

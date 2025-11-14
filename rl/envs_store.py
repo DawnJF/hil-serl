@@ -756,28 +756,16 @@ class GripperPenaltyWrapper(gym.Wrapper):
         self.penalty = penalty
         self.last_gripper_pos = None
 
-        self.action_space = gym.spaces.Box(
-            np.ones((4,), dtype=np.float32) * -1,
-            np.ones((4,), dtype=np.float32),
-        )
-
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        self.last_gripper_pos = obs["state"][0, 0]
+        self.last_gripper_pos = obs["state"][0, -1]
         return obs, info
 
     def step(self, action):
         """Modifies the :attr:`env` :meth:`step` reward using :meth:`self.reward`."""
-        if len(action) == 4:
-            action = [*action[:3], *[0.0, 0.0, 0.0], *action[-1:]]
-
         observation, reward, terminated, truncated, info = self.env.step(action)
-        if len(action) == 7:
-            action = [*action[:3], *action[-1:]]
-        if "intervene_action" in info:
+        if "intervene_action" in info:  # FIXME need?
             action = info["intervene_action"]
-            if len(action) == 7:
-                info["intervene_action"] = [*action[:3], *action[-1:]]
 
         info["grasp_penalty"] = 0.0
         if action[-1] < -0.5:  # close gripper
@@ -800,6 +788,34 @@ class GripperPenaltyWrapper(gym.Wrapper):
         return observation, reward, terminated, truncated, info
 
 
+class Action7to4Wrapper(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        assert env.action_space.shape == (7,)
+
+        self.action_space = gym.spaces.Box(
+            np.ones((4,), dtype=np.float32) * -1,
+            np.ones((4,), dtype=np.float32),
+        )
+
+    def step(self, action):
+        """Modifies the :attr:`env` :meth:`step` reward using :meth:`self.reward`."""
+        if len(action) == 4:
+            action = [*action[:3], *[0.0, 0.0, 0.0], *action[-1:]]
+
+        observation, reward, terminated, truncated, info = self.env.step(action)
+        if len(action) == 7:
+            action = [*action[:3], *action[-1:]]
+        if "intervene_action" in info:
+            if len(info["intervene_action"]) == 7:
+                info["intervene_action"] = [
+                    *info["intervene_action"][:3],
+                    *info["intervene_action"][-1:],
+                ]
+
+        return observation, reward, terminated, truncated, info
+
+
 class HumanRewardEnv(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
@@ -810,6 +826,8 @@ class HumanRewardEnv(gym.Wrapper):
         self.failure_key = False
         self.bad_key = False
 
+        self.pressed_keys = None
+
         def on_press(key):
             try:
                 if str(key) == "Key.space":
@@ -818,6 +836,9 @@ class HumanRewardEnv(gym.Wrapper):
                     self._set_failure()
                 elif key.char == ".":
                     self._set_bad()
+                else:
+                    self.pressed_keys = key.char
+
             except AttributeError:
                 pass
 
@@ -854,6 +875,20 @@ class HumanRewardEnv(gym.Wrapper):
             done = False
         else:
             reward = 0.0 if int(reward) == 0 else reward
+
+        """
+        info["grasp_penalty"] = 0.0
+        if self.pressed_keys is not None:
+            print_color(f"pressed_keys: {self.pressed_keys}")
+            self.pressed_keys = None
+
+            if self.pressed_keys == "z":
+                done = True
+                info["grasp_penalty"] = -1.0
+            elif self.pressed_keys == "x":
+                done = True
+                info["grasp_penalty"] = 1.0
+        """
 
         return obs, reward, done, truncated, info
 

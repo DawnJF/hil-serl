@@ -12,7 +12,9 @@ from utils.tools import print_dict_structure
 
 
 def debug_config():
-    env = mappings.CONFIG_MAPPING["open_switch"]().get_environment()
+    env = mappings.CONFIG_MAPPING[
+        "plug_into_socket_with_power_cord"
+    ]().get_environment()
 
     print("==== observation_space ====")
     print_dict_structure(env.observation_space)
@@ -29,12 +31,13 @@ def debug_config():
     # print(f"obs['state']['tcp_pose'].shape: {obs['state']['tcp_pose'].shape}")
 
     print("==== step ====")
-    for _ in range(11110):
+    for _ in range(10000):
         start_time = time.perf_counter()
         action = env.action_space.sample()
 
         obs, reward, done, truncated, info = env.step(action)
-        print(action)
+        print(f"action: {action}")
+        print(f"obs: state: {obs['state']}")
         dt_s = time.perf_counter() - start_time
         print(f"dt_s: {dt_s}")
 
@@ -119,7 +122,7 @@ def replay_dataset():
 
 
 if __name__ == "__main__":
-    # debug_config()
-    replay_dataset()
+    debug_config()
+    # replay_dataset()
     # check_envs_obs()
     # check_dataset_obs()
