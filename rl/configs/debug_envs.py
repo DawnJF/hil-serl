@@ -5,6 +5,7 @@ import os
 import pickle as pkl
 from PIL import Image
 import numpy as np
+import glob
 
 sys.path.append(os.getcwd())
 from rl import mappings
@@ -121,8 +122,29 @@ def replay_dataset():
                 break
 
 
+def count_buffer_size():
+    checkpoint_path = "outputs/mse/plug/"
+    # checkpoint_path = "outputs/rlpd/debug1"
+    buffer_size = 0
+    for file in glob.glob(os.path.join(checkpoint_path, "buffer/*.pkl")):
+        with open(file, "rb") as f:
+            transitions = pkl.load(f)
+            print(f"File: {file}, size: {len(transitions)}")
+            buffer_size += len(transitions)
+    print(f"Total buffer size: {buffer_size}")
+
+    demo_buffer_size = 0
+    for file in glob.glob(os.path.join(checkpoint_path, "demo_buffer/*.pkl")):
+        with open(file, "rb") as f:
+            transitions = pkl.load(f)
+            print(f"File: {file}, size: {len(transitions)}")
+            demo_buffer_size += len(transitions)
+    print(f"Total demo buffer size: {demo_buffer_size}")
+
+
 if __name__ == "__main__":
-    debug_config()
+    # debug_config()
     # replay_dataset()
     # check_envs_obs()
     # check_dataset_obs()
+    count_buffer_size()

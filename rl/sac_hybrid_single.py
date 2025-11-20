@@ -449,6 +449,60 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
 
         return actor_loss, info
 
+    def policy_mse_loss_fn(self, batch, params: Params, rng: PRNGKey):
+        """
+        相比likelihood感觉容易减速
+        """
+        batch_size = batch["rewards"].shape[0]
+
+        rng, policy_rng, sample_rng, critic_rng = jax.random.split(rng, 4)
+        action_distributions = self.forward_policy(
+            batch["observations"], rng=policy_rng, grad_params=params
+        )
+        actions, log_probs = action_distributions.sample_and_log_prob(seed=sample_rng)
+
+        actions_i = batch["actions"][..., :-1]
+
+        chex.assert_shape(log_probs, (batch_size,))
+
+        actor_loss = jnp.mean((actions - actions_i) ** 2)
+
+        info = {
+            "actor_loss": actor_loss,
+            "entropy": -log_probs.mean(),
+        }
+
+        return actor_loss, info
+
+    def policy_likelihood_loss_fn(self, batch, params: Params, rng: PRNGKey):
+        batch_size = batch["rewards"].shape[0]
+
+        rng, policy_rng = jax.random.split(rng, 2)
+
+        # 前向传播获取动作分布
+        action_distributions = self.forward_policy(
+            batch["observations"], rng=policy_rng, grad_params=params
+        )
+
+        # 获取目标动作
+        target_actions = batch["actions"][..., :-1]
+
+        # clip -1,1
+        eps = 1e-6
+        target_actions = jnp.clip(target_actions, -1 + eps, 1 - eps)
+
+        # 计算目标动作在当前分布下的对数似然
+        log_likelihood = action_distributions.log_prob(target_actions)
+
+        chex.assert_shape(log_likelihood, (batch_size,))
+
+        # 负对数似然损失（最小化负对数似然 = 最大化似然）
+        actor_loss = -jnp.mean(log_likelihood)
+
+        info = {"actor_loss": actor_loss}
+
+        return actor_loss, info
+
     def temperature_loss_fn(self, batch, params: Params, rng: PRNGKey):
         rng, next_action_sample_key = jax.random.split(rng)
         next_actions, next_actions_log_probs = self._compute_next_actions(
@@ -469,6 +523,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             "grasp_critic": partial(self.grasp_critic_loss_fn, batch),
             # "grasp_critic": partial(self.grasp_critic_preference_loss_fn, batch),
             "actor": partial(self.policy_loss_fn, batch),
+            # "actor": partial(self.policy_likelihood_loss_fn, batch),
             "temperature": partial(self.temperature_loss_fn, batch),
         }
 

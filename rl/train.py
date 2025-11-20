@@ -51,7 +51,7 @@ flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_boolean("learner", False, "Whether this is a learner.")
 flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
-flags.DEFINE_integer("port", 5088, "port")
+flags.DEFINE_integer("port", 6088, "port")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_string(
     "checkpoint_path",
@@ -135,6 +135,7 @@ def resume_data_from_checkpoint(replay_buffer, demo_buffer):
         for file in glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")):
             with open(file, "rb") as f:
                 transitions = pkl.load(f)
+                print(f"Loading data from {file}, num transitions: {len(transitions)}")
                 for transition in transitions:
                     replay_buffer.insert(transition)
         print_green(
@@ -147,6 +148,7 @@ def resume_data_from_checkpoint(replay_buffer, demo_buffer):
         for file in glob.glob(os.path.join(FLAGS.checkpoint_path, "demo_buffer/*.pkl")):
             with open(file, "rb") as f:
                 transitions = pkl.load(f)
+                print(f"Loading data from {file}, num transitions: {len(transitions)}")
                 for transition in transitions:
                     demo_buffer.insert(transition)
         print_green(
@@ -236,6 +238,7 @@ def actor(
         # Step environment
         with timer.context("step_env"):
 
+            # print(f"[debug] action: {actions}")
             next_obs, reward, done, truncated, info = env.step(actions)
             if reward != 0:
                 print_green(f"[Actor] reward: {reward}")
@@ -442,6 +445,11 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
         ):
             checkpoints.save_checkpoint(
                 os.path.abspath(FLAGS.checkpoint_path), agent.state, step=step, keep=100
+            )
+
+        if step % 4000 == 0:
+            print_green(
+                f"replay_buffer:{len(replay_buffer)}, demo_buffer:{len(demo_buffer)}"
             )
 
 

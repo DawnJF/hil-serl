@@ -50,7 +50,6 @@ class UR_Platform_Env(gym.Env):
         self.gripper_speed = config.GRIPPER_SPEED
         self.gripper_force = config.GRIPPER_FORCE
         self._update_currpos()
-        self.lastsent = time.time()
         self.randomreset = config.RANDOM_RESET
         self.random_xy_range = config.RANDOM_XY_RANGE
         self.random_rz_range = config.RANDOM_RZ_RANGE
@@ -161,7 +160,7 @@ class UR_Platform_Env(gym.Env):
 
         self.curr_path_length += 1
         dt_s = time.perf_counter() - start_time
-        min_step_time = 1 / 30  # 30hz
+        min_step_time = 1 / 20  # 20hz
         if dt_s < min_step_time:
             print(
                 f"[UR_Platform_Env] sleep min_step_time: {(min_step_time - dt_s):.4f}s"
