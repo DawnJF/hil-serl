@@ -320,8 +320,36 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         # critic_loss += preference_loss
         """
 
+        """
+        # -------------------------
+        # Preference (hinge) Loss
+        # -------------------------
+        q2 = self.forward_critic(
+            batch["observations"],
+            batch["o_actions"][..., :-1],
+            rng=rng,
+            grad_params=params,
+        )
+
+        q1 = predicted_qs
+        margin = 0.1  # 差距阈值
+
+        pref_loss = jnp.maximum(0.0, (q2 - q1) - margin)
+        pref_loss = jnp.mean(pref_loss)
+
+        # 超参数：偏好损失的强度
+        lambda_pref = 0.8
+        pref_loss = lambda_pref * pref_loss
+
+        # 总 critic loss
+        critic_loss = critic_loss + pref_loss
+
+        """
+
         info = {
             "critic_loss": critic_loss,
+            # "pref_loss": pref_loss,
+            # "predicted_qs_o": jnp.mean(q2),
             "predicted_qs": jnp.mean(predicted_qs),
             "target_qs": jnp.mean(target_qs),
             "rewards": batch["rewards"].mean(),
@@ -503,6 +531,31 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
 
         return actor_loss, info
 
+    def policy_preference_loss_fn(self, batch, params: Params, rng: PRNGKey):
+        rng, policy_rng1, policy_rng2 = jax.random.split(rng, 3)
+
+        # 前向传播获取动作分布
+        action_distributions = self.forward_policy(
+            batch["observations"], rng=rng, grad_params=params
+        )
+        a1, a1_log_prob = action_distributions.sample_and_log_prob(seed=policy_rng1)
+        a2, a2_log_prob = action_distributions.sample_and_log_prob(seed=policy_rng2)
+
+        # Q 值计算并裁剪
+        q1 = self.forward_target_critic(batch["observations"], a1, rng=rng).mean(axis=0)
+        q2 = self.forward_target_critic(batch["observations"], a2, rng=rng).mean(axis=0)
+
+        better_first = q1 > q2
+        actor_loss = -jnp.mean(
+            jnp.where(
+                better_first, a1_log_prob - a2_log_prob, a2_log_prob - a1_log_prob
+            )
+        )
+
+        info = {"actor_loss": actor_loss}
+
+        return actor_loss, info
+
     def temperature_loss_fn(self, batch, params: Params, rng: PRNGKey):
         rng, next_action_sample_key = jax.random.split(rng)
         next_actions, next_actions_log_probs = self._compute_next_actions(
@@ -520,10 +573,11 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         return {
             "critic": partial(self.critic_loss_fn, batch),
             # "critic": partial(self.critic_preference_only_loss_fn, batch),
-            "grasp_critic": partial(self.grasp_critic_loss_fn, batch),
-            # "grasp_critic": partial(self.grasp_critic_preference_loss_fn, batch),
+            # "grasp_critic": partial(self.grasp_critic_loss_fn, batch),
+            "grasp_critic": partial(self.grasp_critic_preference_loss_fn, batch),
             "actor": partial(self.policy_loss_fn, batch),
             # "actor": partial(self.policy_likelihood_loss_fn, batch),
+            # "actor": partial(self.policy_preference_loss_fn, batch),
             "temperature": partial(self.temperature_loss_fn, batch),
         }
 

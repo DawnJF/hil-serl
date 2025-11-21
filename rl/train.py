@@ -302,10 +302,9 @@ def actor(
             # dump to pickle file
             buffer_path = os.path.join(FLAGS.checkpoint_path, "buffer")
             demo_buffer_path = os.path.join(FLAGS.checkpoint_path, "demo_buffer")
-            if not os.path.exists(buffer_path):
-                os.makedirs(buffer_path)
-            if not os.path.exists(demo_buffer_path):
-                os.makedirs(demo_buffer_path)
+
+            os.makedirs(buffer_path, exist_ok=True)
+            os.makedirs(demo_buffer_path, exist_ok=True)
             with open(os.path.join(buffer_path, f"transitions_{step}.pkl"), "wb") as f:
                 pkl.dump(transitions, f)
                 transitions = []
@@ -437,6 +436,9 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
         if step % config.log_period == 0 and wandb_logger:
             wandb_logger.log(update_info, step=step)
             wandb_logger.log({"timer": timer.get_average_times()}, step=step)
+
+        # if step % 50 == 0:
+        #     print(f"actor loss: {update_info}")
 
         if (
             step > 0
