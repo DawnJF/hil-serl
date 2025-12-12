@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+
+import glob
+import os
+import pickle as pkl
+import time
+from typing import Union
+
+import jax
+if not hasattr(jax, "tree_map"):
+    jax.tree_map = jax.tree.map
+if not hasattr(jax, "tree_leaves"):
+    jax.tree_leaves = jax.tree.leaves
+import jax.numpy as jnp
+import numpy as np
+import tqdm
+from absl import app, flags
+from experiments.configs.train_config import DefaultTrainingConfig
+from experiments.mappings import CONFIG_MAPPING
+from flax.training import checkpoints
+from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
+from serl_launcher.agents.continuous.iql import IQLAgent
+from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
+from serl_launcher.utils.launcher import (
+    make_iql_pixel_agent,
+    make_wandb_logger
+)
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
+flags.DEFINE_integer("seed", 42, "Random seed.")
+flags.DEFINE_string("iql_checkpoint_path", None, "Path to save checkpoints.")
+flags.DEFINE_integer(
+    "checkpoint_step", None, "Checkpoint step. If None, use the latest checkpoint."
+)
+flags.DEFINE_integer(
+    "save_period", 50_000, "How often to save checkpoints during training."
+)
+flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
+flags.DEFINE_integer("train_steps", 200_000, "Number of pretraining steps.")
+flags.DEFINE_bool("save_video", False, "Save video of the evaluation.")
+flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
+flags.DEFINE_bool("use_calql", True, "Use CalQL instead of CQL.")
+flags.DEFINE_float("reward_scale", 1.0, "Reward scale")
+flags.DEFINE_float("reward_bias", -1.0, "Reward bias")
+flags.DEFINE_bool("use_resnet_mlp", False, "Use resnet mlp.")
+
+
+flags.DEFINE_boolean(
+    "debug", False, "Debug mode."
+)  # debug mode will disable wandb logging
+flags.DEFINE_string(
+    "wandb_mode",
+    "online",
+    "wandb mode, online or offline, if debug is true, mode is disabled.",
+)
+flags.DEFINE_string("wandb_output_dir", None, "wandb output dir")
+
+
+devices = jax.local_devices()
+num_devices = len(devices)
+sharding = jax.sharding.PositionalSharding(devices)
+
+
+def print_green(x):
+    return print("\033[92m {}\033[00m".format(x))
+
+
+def print_yellow(x):
+    return print("\033[93m {}\033[00m".format(x))
+
+
+##############################################################################
+
+
+def eval(
+    env,
+    iql_agent: IQLAgent,
+    sampling_rng,
+):
+    """
+    This is the actor loop, which runs when "--actor" is set to True.
+    """
+    success_counter = 0
+    time_list = []
+    for episode in range(FLAGS.eval_n_trajs):
+        obs, _ = env.reset()
+        done = False
+        start_time = time.time()
+        while not done:
+            rng, key = jax.random.split(sampling_rng)
+
+            actions = iql_agent.sample_actions(observations=obs, seed=key)
+            actions = np.asarray(jax.device_get(actions))
+            next_obs, reward, done, truncated, info = env.step(actions)
+            obs = next_obs
+            if done:
+                if reward:
+                    dt = time.time() - start_time
+                    time_list.append(dt)
+                    print(dt)
+                success_counter += reward
+                print(reward)
+                print(f"{success_counter}/{episode + 1}")
+
+    print(f"success rate: {success_counter / FLAGS.eval_n_trajs}")
+    print(f"average time: {np.mean(time_list)}")
+
+
+##############################################################################
+
+
+def train(
+    iql_agent: IQLAgent,
+    demo_buffer,
+    config: DefaultTrainingConfig,
+    wandb_logger=None,
+):
+    start_step = (
+        int(
+            os.path.basename(
+                checkpoints.latest_checkpoint(os.path.abspath(FLAGS.iql_checkpoint_path))
+            )[11:]
+        )
+        + 1
+        if FLAGS.iql_checkpoint_path and glob.glob(os.path.join(FLAGS.iql_checkpoint_path, "checkpoint_*"))
+        else 0
+    )
+    
+    iql_replay_iterator = demo_buffer.get_iterator(
+        sample_args={
+            "batch_size": config.batch_size,
+            "pack_obs_and_next_obs": False,
+        },
+        device=sharding.replicate(),
+    )
+
+    # Pretrain IQL policy to get started
+    for step in tqdm.tqdm(
+        range(start_step, FLAGS.train_steps),
+        dynamic_ncols=True,
+        desc="iql_pretraining",
+    ):
+        batch = next(iql_replay_iterator)
+        iql_agent, iql_update_info = iql_agent.update(batch)
+        if step % config.log_period == 0 and wandb_logger:
+            wandb_logger.log({"iql": iql_update_info}, step=step)
+
+        if FLAGS.save_period and (step + 1) % FLAGS.save_period == 0:
+            checkpoints.save_checkpoint(
+                os.path.abspath(FLAGS.iql_checkpoint_path),
+                iql_agent.state,
+                step=step + 1,
+                keep=100,
+            )
+
+    print_green("iql pretraining done and saved checkpoint")
+
+
+##############################################################################
+
+
+def main(_):
+    config: DefaultTrainingConfig = CONFIG_MAPPING[FLAGS.exp_name]()
+
+    assert config.batch_size % num_devices == 0
+    assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
+    eval_mode = FLAGS.eval_n_trajs > 0
+    env = config.get_environment(
+        fake_env=not eval_mode,
+        save_video=FLAGS.save_video,
+        classifier=True,
+    )
+    env = RecordEpisodeStatistics(env)
+
+    agenttype = make_iql_pixel_agent
+    iql_agent: Union[IQLAgent] = agenttype(
+        seed=FLAGS.seed,
+        sample_obs=env.observation_space.sample(),
+        sample_action=env.action_space.sample(),
+        image_keys=config.image_keys,
+        encoder_type=config.encoder_type,
+        reward_scale=FLAGS.reward_scale,
+        reward_bias=FLAGS.reward_bias,  # eventually move this to the env?
+        discount=config.discount,
+        target_entropy=-4.0
+    )
+
+    # replicate agent across devices
+    # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
+    iql_agent: IQLAgent = jax.device_put(
+        jax.tree_map(jnp.array, iql_agent), sharding.replicate()
+    )
+
+    if not eval_mode:
+        assert not os.path.isdir(
+            os.path.join(FLAGS.iql_checkpoint_path, f"checkpoint_{FLAGS.train_steps}")
+        )
+
+        demo_buffer = MemoryEfficientReplayBufferDataStore(
+            env.observation_space,
+            env.action_space,
+            capacity=config.replay_buffer_capacity,
+            image_keys=config.image_keys,
+            include_mc_returns=FLAGS.use_calql,
+            discount=config.discount,
+            reward_scale=FLAGS.reward_scale,
+            reward_bias=FLAGS.reward_bias,
+        )
+        print_green(f"FLAGS.use_calql: {FLAGS.use_calql}")
+
+        # set up wandb and logging
+        wandb_logger = make_wandb_logger(
+            project="hil-serl",
+            description=f"iql_reward_bias_{FLAGS.reward_bias}_discount_{config.discount}_{FLAGS.exp_name}",
+            debug=FLAGS.debug,
+            mode=FLAGS.wandb_mode,
+            output_dir=FLAGS.wandb_output_dir,
+            variant={
+                **FLAGS.flag_values_dict(),
+                "agent_config": dict(**iql_agent.config),
+            },
+        )
+
+        assert FLAGS.demo_path is not None
+
+        for path in FLAGS.demo_path:
+            with open(path, "rb") as f:
+                print_green(f"Loading {path}")
+                transitions = pkl.load(f)
+                for transition in transitions:
+                    demo_buffer.insert(transition)
+        print_green(f"demo buffer size: {len(demo_buffer)}")
+        # learner loop
+        print_green("starting learner loop")
+        train(
+            iql_agent=iql_agent,
+            demo_buffer=demo_buffer,
+            wandb_logger=wandb_logger,
+            config=config,
+        )
+
+    else:
+        rng = jax.random.PRNGKey(FLAGS.seed)
+        sampling_rng = jax.device_put(rng, sharding.replicate())
+
+        ckpt = checkpoints.restore_checkpoint(
+            os.path.abspath(FLAGS.iql_checkpoint_path),
+            iql_agent.state,
+            step=FLAGS.checkpoint_step,
+        )
+        iql_agent = iql_agent.replace(state=ckpt)
+
+        print_green("starting actor loop")
+        eval(
+            env=env,
+            iql_agent=iql_agent,
+            sampling_rng=sampling_rng,
+        )
+
+
+if __name__ == "__main__":
+    app.run(main)

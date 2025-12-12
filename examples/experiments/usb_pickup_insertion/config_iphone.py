@@ -23,7 +23,6 @@ from utils.tools import print_dict_structure
 
 from experiments.config import DefaultTrainingConfig
 from experiments.usb_pickup_insertion.wrapper import (
-    HumanControlTargetEnv,
     HumanRewardEnv,
     USBEnv,
     GripperPenaltyWrapper,
@@ -43,7 +42,9 @@ class UREnvConfig(DefaultEnvConfig):
         "rgb": {
             "dim": (1280, 720),
         },
-        "scene": {"dim": (1280, 720)},
+        "scene": {
+            "dim": (1280, 720)
+        }
     }
     IMAGE_CROP = {
         "wrist": lambda img: img[20:330, 100:560],
@@ -55,26 +56,22 @@ class UREnvConfig(DefaultEnvConfig):
     # )
     # reset_xyz = np.array([-0.35, -0.5, 0.15])
     # For iphone
-    reset_xyz = np.array(
-        [
-            -0.5999861359596252,
-            -0.20111770927906036,
-            0.12716920274496078,
-        ]
-    )
+    reset_xyz = np.array([
+        -0.5999861359596252,
+        -0.20111770927906036,
+        0.12716920274496078,
+    ])
     reset_euler = np.array([np.pi, 0, np.pi * 3 / 4])
-    reset_quat = np.array(
-        [
-            0.9797053086774433,
-            0.20010938213011484,
-            0.010719838360479872,
-            0.004339170227621892,
-        ]
-    )
+    reset_quat = np.array([
+        0.9797053086774433,
+        0.20010938213011484,
+        0.010719838360479872,
+        0.004339170227621892
+    ])
     RESET_POSE = np.array([*reset_xyz, *reset_quat])
     ACTION_SCALE = np.array([0.003, 0.02, 1])  # xyz, euler, gripper
     GRIPPER_OPEN_POSE = 170
-    GRIPPER_CLOSE_POSE = 212
+    GRIPPER_CLOSE_POSE = 205
     GRIPPER_SPEED = 10
     GRIPPER_FORCE = 10
     RANDOM_RESET = True
@@ -85,40 +82,44 @@ class UREnvConfig(DefaultEnvConfig):
     # [-0.5, -0.2, 0.25]
     # [-0.6, -0.6, 0.055]
     ABS_POSE_LIMIT_HIGH = np.concatenate(
-        [np.array([-0.35, -0.15, 0.20]), reset_euler + np.array([0.1, 0.1, 0.3])]
+        [np.array([-0.35, -0.15, 0.15]), reset_euler + np.array([0.1, 0.1, 0.3])]
     )
     ABS_POSE_LIMIT_LOW = np.concatenate(
         [np.array([-0.65, -0.55, 0.073]), reset_euler - np.array([0.1, 0.1, 0.3])]
     )
     MAX_EPISODE_LENGTH = 300
-
+     
     # image transform configs
     TFS = {
-        "brightness": {
+        "brightness":{
             "weight": 1.0,
             "type": "ColorJitter",
-            "kwargs": {"brightness": [0.8, 1.2]},
+            "kwargs": {"brightness": [0.8, 1.2]}
         },
         "contrast": {
             "weight": 1.0,
             "type": "ColorJitter",
-            "kwargs": {"contrast": [0.8, 1.2]},
+            "kwargs": {"contrast": [0.8, 1.2]}
         },
         "saturation": {
             "weight": 1.0,
             "type": "ColorJitter",
-            "kwargs": {"saturation": [0.5, 1.5]},
+            "kwargs": {"saturation": [0.5, 1.5]}
         },
-        "hue": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"hue": [-0.05, 0.05]}},
+        "hue": {
+            "weight": 1.0,
+            "type": "ColorJitter",
+            "kwargs": {"hue": [-0.05, 0.05]}
+        },
         "sharpness": {
             "weight": 1.0,
             "type": "SharpnessJitter",
-            "kwargs": {"sharpness": [0.5, 1.5]},
+            "kwargs": {"sharpness": [0.5, 1.5]}
         },
-        "translation": {
+        "translation":{
             "weight": 1.0,
             "type": "RandomAffine",
-            "kwargs": {"degrees": 0, "translate": (0.1, 0.1)},
+            "kwargs": {"degrees": 0, "translate": (0.1, 0.1)}
         },
         # "perspective":{
         #     "weight": 1.0,
@@ -151,14 +152,9 @@ class TrainConfig(DefaultTrainingConfig):
     encoder_type = "resnet-pretrained"
     setup_mode = "single-arm-learned-gripper"
 
-    def get_environment(
-        self, fake_env=False, save_video=False, classifier=False, debug=False
-    ):
-        config = UREnvConfig()
-        if debug:
-            config.MAX_EPISODE_LENGTH = 10000
-        env = UR_Platform_Env(fake_env=fake_env, config=config)
-        # env = HumanControlTargetEnv(env, "2")
+    def get_environment(self, fake_env=False, save_video=False, classifier=False, debug=False):
+        # env = USBEnv(fake_env=fake_env, save_video=save_video, config=UREnvConfig())
+        env = UR_Platform_Env(fake_env=fake_env, config=UREnvConfig())
         env = HumanRewardEnv(env)
         if not fake_env:
             env = SpacemouseIntervention(env)
@@ -196,7 +192,7 @@ def test_images():
         jax.tree_map = jax.tree.map
     if not hasattr(jax, "tree_leaves"):
         jax.tree_leaves = jax.tree.leaves
-
+    
     proprio_keys = ["tcp_pose", "gripper_pose"]
 
     env = UR_Platform_Env(fake_env=False, config=UREnvConfig())
@@ -228,6 +224,9 @@ def test_images():
     print("scene_type", type(scene))
 
     ##------ debug
+    os.makedirs(f"outputs/test_rgb", exist_ok=True)
+    os.makedirs(f"outputs/test_wrist", exist_ok=True)
+    os.makedirs(f"outputs/test_scene", exist_ok=True)
     Image.fromarray(rgb.squeeze(0)).save("outputs/test_rgb/rgb.png")
     Image.fromarray(wrist.squeeze(0)).save("outputs/test_rgb/wrist.png")
     Image.fromarray(scene.squeeze(0)).save("outputs/test_rgb/scene.png")
@@ -292,5 +291,5 @@ if __name__ == "__main__":
 
     # test_fake_Env()
     # test_mouse()
-    test_reward_model()
-    # test_images()
+    # test_reward_model()
+    test_images()

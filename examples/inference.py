@@ -3,7 +3,6 @@
 import glob
 import time
 import jax
-
 if not hasattr(jax, "tree_map"):
     jax.tree_map = jax.tree.map
 if not hasattr(jax, "tree_leaves"):
@@ -16,6 +15,7 @@ from flax.training import checkpoints
 import os
 import copy
 import pickle as pkl
+from typing import Union
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 from natsort import natsorted
 
@@ -24,6 +24,10 @@ from serl_launcher.agents.continuous.sac_hybrid_single import SACAgentHybridSing
 from serl_launcher.agents.continuous.sac_hybrid_dual import SACAgentHybridDualArm
 from serl_launcher.utils.timer_utils import Timer
 from serl_launcher.utils.train_utils import concat_batches
+from serl_launcher.agents.continuous.calql import CalQLAgent
+from serl_launcher.agents.continuous.cql import CQLAgent
+from serl_launcher.agents.continuous.cql_hybrid_single import CQLAgentHybridSingleArm
+
 
 from agentlace.trainer import TrainerServer, TrainerClient
 from agentlace.data.data_store import QueuedDataStore
@@ -34,6 +38,9 @@ from serl_launcher.utils.launcher import (
     make_sac_pixel_agent_hybrid_dual_arm,
     make_trainer_config,
     make_wandb_logger,
+    make_calql_pixel_agent,
+    make_iql_pixel_agent,
+    make_sac_cql_pixel_agent_hybrid_single_arm
 )
 from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
 
@@ -51,11 +58,15 @@ flags.DEFINE_string("checkpoint_path", None, "Path to save checkpoints.")
 flags.DEFINE_integer("eval_checkpoint_step", 0, "Step to evaluate the checkpoint.")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_boolean("save_video", False, "Save video.")
+flags.DEFINE_float("reward_scale", 1.0, "Reward scale")
+flags.DEFINE_float("reward_bias", 0.0, "Reward bias")
+flags.DEFINE_bool("use_calql", True, "Use CalQL instead of CQL.")
 
 flags.DEFINE_boolean(
     "debug", False, "Debug mode."
 )  # debug mode will disable wandb logging
 
+flags.DEFINE_string("wandb_mode", "online", "wandb mode, online or offline, if debug is true, mode is disabled.")
 
 # for optimizer config
 flags.DEFINE_float("learning_rate", 3e-4, "learning rate")
@@ -73,7 +84,6 @@ sharding = jax.sharding.PositionalSharding(devices)
 
 def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
-
 
 def inference(agent, env, sampling_rng):
     success_counter = 0
@@ -93,7 +103,9 @@ def inference(agent, env, sampling_rng):
         while not done:
             sampling_rng, key = jax.random.split(sampling_rng)
             actions = agent.sample_actions(
-                observations=jax.device_put(obs), argmax=True, seed=key
+                observations=jax.device_put(obs),
+                argmax=True,
+                seed=key
             )
             actions = np.asarray(jax.device_get(actions))
 
@@ -127,33 +139,105 @@ def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     env = config.get_environment(
         fake_env=FLAGS.learner,
+        save_video=FLAGS.save_video,
+        # classifier=True,
     )
     env = RecordEpisodeStatistics(env)
 
     rng, sampling_rng = jax.random.split(rng)
     env.reset()
-
-    agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
-        seed=FLAGS.seed,
-        sample_obs=env.observation_space.sample(),
-        sample_action=env.action_space.sample(),
-        image_keys=config.image_keys,
-        encoder_type=config.encoder_type,
-        discount=config.discount,
-        optimizer_configs={
-            "learning_rate": FLAGS.learning_rate,
-            "warmup_steps": FLAGS.warmup_steps,
-            "cosine_decay_steps": FLAGS.cosine_decay_steps,
-            "weight_decay": FLAGS.weight_decay,
-            "clip_grad_norm": FLAGS.clip_grad_norm,
-            "return_lr_schedule": FLAGS.return_lr_schedule,
-        },
-    )
-    include_grasp_penalty = True
+    
+    if config.setup_mode == 'single-arm-fixed-gripper' or config.setup_mode == 'dual-arm-fixed-gripper':   
+        agent: SACAgent = make_sac_pixel_agent(
+            seed=FLAGS.seed,
+            sample_obs=env.observation_space.sample(),
+            sample_action=env.action_space.sample(),
+            image_keys=config.image_keys,
+            encoder_type=config.encoder_type,
+            discount=config.discount,
+        )
+        include_grasp_penalty = False
+    elif config.setup_mode == 'single-arm-learned-gripper':
+        agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
+            seed=FLAGS.seed,
+            sample_obs=env.observation_space.sample(),
+            sample_action=env.action_space.sample(),
+            image_keys=config.image_keys,
+            encoder_type=config.encoder_type,
+            discount=config.discount,
+            optimizer_configs={
+                "learning_rate": FLAGS.learning_rate,
+                "warmup_steps": FLAGS.warmup_steps,
+                "cosine_decay_steps": FLAGS.cosine_decay_steps,
+                "weight_decay": FLAGS.weight_decay,
+                "clip_grad_norm": FLAGS.clip_grad_norm,
+                "return_lr_schedule": FLAGS.return_lr_schedule
+            }
+        )
+        include_grasp_penalty = True
+    elif config.setup_mode == 'dual-arm-learned-gripper':
+        agent: SACAgentHybridDualArm = make_sac_pixel_agent_hybrid_dual_arm(
+            seed=FLAGS.seed,
+            sample_obs=env.observation_space.sample(),
+            sample_action=env.action_space.sample(),
+            image_keys=config.image_keys,
+            encoder_type=config.encoder_type,
+            discount=config.discount,
+        )
+        include_grasp_penalty = True
+    elif config.setup_mode == 'iql':
+        agent: Union[CalQLAgent, CQLAgent] = make_iql_pixel_agent(
+            seed=FLAGS.seed,
+            sample_obs=env.observation_space.sample(),
+            sample_action=env.action_space.sample(),
+            image_keys=config.image_keys,
+            encoder_type=config.encoder_type,
+            reward_scale=FLAGS.reward_scale,
+            reward_bias=FLAGS.reward_bias,  # eventually move this to the env?
+            discount=config.discount,
+            target_entropy=-4.0
+        )
+    elif config.setup_mode == 'calql':
+        agent: Union[CalQLAgent, CQLAgent] = make_calql_pixel_agent(
+            seed=FLAGS.seed,
+            sample_obs=env.observation_space.sample(),
+            sample_action=env.action_space.sample(),
+            image_keys=config.image_keys,
+            encoder_type=config.encoder_type,
+            reward_scale=FLAGS.reward_scale,
+            reward_bias=FLAGS.reward_bias,  # eventually move this to the env?
+            discount=config.discount,
+            is_calql=FLAGS.use_calql,
+            target_entropy=-4.0
+        )
+    elif config.setup_mode == 'calql-single-arm-learned-gripper':
+        agent: CQLAgentHybridSingleArm = make_sac_cql_pixel_agent_hybrid_single_arm(
+            seed=FLAGS.seed,
+            sample_obs=env.observation_space.sample(),
+            sample_action=env.action_space.sample(),
+            image_keys=config.image_keys,
+            encoder_type=config.encoder_type,
+            reward_scale=FLAGS.reward_scale,
+            reward_bias=FLAGS.reward_bias,  # eventually move this to the env?
+            discount=config.discount,
+            target_entropy=-4.0,
+            optimizer_configs={
+                "learning_rate": FLAGS.learning_rate,
+                "warmup_steps": FLAGS.warmup_steps,
+                "cosine_decay_steps": FLAGS.cosine_decay_steps,
+                "weight_decay": FLAGS.weight_decay,
+                "clip_grad_norm": FLAGS.clip_grad_norm,
+                "return_lr_schedule": FLAGS.return_lr_schedule
+            }
+        )
+    else:
+        raise NotImplementedError(f"Unknown setup mode: {config.setup_mode}")
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
-    agent = jax.device_put(jax.tree_map(jnp.array, agent), sharding.replicate())
+    agent = jax.device_put(
+        jax.tree_map(jnp.array, agent), sharding.replicate()
+    )
 
     sampling_rng = jax.device_put(sampling_rng, sharding.replicate())
 
@@ -164,7 +248,6 @@ def main(_):
         env,
         sampling_rng,
     )
-
 
 if __name__ == "__main__":
     app.run(main)

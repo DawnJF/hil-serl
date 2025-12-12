@@ -21,6 +21,93 @@
             "args": "${command:pickArgs}"
         },
         {
+            "name": "learner pretrain",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/train_rlpd_pretrain.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--exp_name=plug_into_socket_with_power_cord",
+                "--checkpoint_path=/home/facelesswei/code/hil-serl-zbh/examples/experiments/usb_pickup_insertion/plug_with_power_cord_pretrain",
+                "--demo_path=/ssdwork/liujinxin/DATASET/Jax_Hil_Serl_Dataset/2025-11-06/plug_into_socket_with_power_cord_433_with_demoBuffer_10-25-00.pkl",
+                "--learner",
+                "--wandb_mode=disabled"
+                // "--debug",
+                // "--port=5588",
+                // "--checkpoint_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl"
+            ],
+            "env": {
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".3"
+            }
+        },
+        {
+            "name": "calql pretrain",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/train_calql.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--exp_name=plug_into_socket_with_power_cord",
+                "--calql_checkpoint_path=../../experiments/usb_pickup_insertion/plug_with_power_cord_pretrain16",
+                "--demo_path=/ssdwork/liujinxin/DATASET/Jax_Hil_Serl_Dataset/2025-11-06/plug_into_socket_with_power_cord_433_with_demoBuffer_10-25-00.pkl",
+                "--save_period=1000",
+                "--train_steps=1000000",
+                "--use_calql=True",
+                "--reward_scale=1.0",
+                "--reward_bias=0.0",
+                "--wandb_mode=disabled"
+            ],
+            "env": {
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".3"
+            }
+        },
+        {
+            "name": "wsrl inference",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/inference.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--exp_name=plug_into_socket_with_power_cord",
+                "--checkpoint_path=/home/facelesswei/code/hil-serl-zbh/examples/experiments/usb_pickup_insertion/plug_with_power_cord_pretrain32",
+                "--eval_checkpoint_step=175000",
+                "--eval_n_trajs=70",
+                "--use_calql=False"
+                // "--debug",
+                // "--port=5588",
+                // "--checkpoint_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl"
+            ],
+            "env": {
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".3"
+            }
+        },
+        {
+            "name": "wsrl learner",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/train_wsrl.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--exp_name=plug_into_socket_with_power_cord",
+                "--pretrained_checkpoint_path=/home/facelesswei/code/hil-serl-zbh/examples/experiments/usb_pickup_insertion/plug_with_power_cord_pretrain32/checkpoint_175000",
+                "--checkpoint_path=/home/facelesswei/code/hil-serl-zbh-wsrl/examples/experiments/usb_pickup_insertion/wsrl_plug_into_socket_with_power_cord1",
+                "--demo_path=/home/facelesswei/code/Jax_Hil_Serl_Dataset/2025-11-06/plug_into_socket_with_power_cord_433_with_demoBuffer_10-25-00.pkl",
+                "--wandb_mode=disabled",
+                "--learner",
+                // "--debug",
+                // "--port=5588",
+                // "--checkpoint_path=/media/robot/30F73268F87D0FEF/Jax_Hil_Serl_Dataset/2025-09-01/usb_pickup_insertion_5_14-42-28.pkl"
+            ],
+            "env": {
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".3"
+            }
+        },
+        {
             "name": "learner",
             "type": "debugpy",
             "request": "launch",
@@ -66,8 +153,9 @@
             "program": "${workspaceFolder}/examples/record_demos.py",
             "console": "integratedTerminal",
             "args": [
-                "--exp_name=usb_pickup_insertion",
-                "--successes_needed=1"
+                "--exp_name=plug_into_socket_with_power_cord",
+                "--successes_needed=1",
+                "--collect_data_wsrl_way=True"
             ],
             "env": {
                 "XLA_PYTHON_CLIENT_PREALLOCATE": "false",

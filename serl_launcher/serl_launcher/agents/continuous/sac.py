@@ -14,7 +14,7 @@ from serl_launcher.common.optimizers import make_optimizer
 from serl_launcher.common.typing import Batch, Data, Params, PRNGKey
 from serl_launcher.networks.actor_critic_nets import Critic, Policy, ensemblize
 from serl_launcher.networks.lagrange import GeqLagrangeMultiplier
-from serl_launcher.networks.mlp import MLP
+from serl_launcher.networks.mlp import MLP, MLPResNet
 from serl_launcher.utils.train_utils import _unpack
 
 
@@ -45,14 +45,34 @@ class SACAgent(flax.struct.PyTreeNode):
         """
         if train:
             assert rng is not None, "Must specify rng when training"
-        return self.state.apply_fn(
-            {"params": grad_params or self.state.params},
-            observations,
-            actions,
-            name="critic",
-            rngs={"dropout": rng} if train else {},
-            train=train,
-        )
+        if jnp.ndim(actions) == 3:
+            # forward the q function with multiple actions on each state
+            q = jax.vmap(
+                lambda a: self.state.apply_fn(
+                    {"params": grad_params or self.state.params},
+                    observations,
+                    a,
+                    name="critic",
+                    rngs={"dropout": rng} if train else {},
+                    train=train,
+                ),
+                in_axes=1,
+                out_axes=-1,
+            )(
+                actions
+            )  # (ensemble_size, batch_size, n_actions)
+        else:
+            # forward the q function on 1 action on each state
+            q = self.state.apply_fn(
+                {"params": grad_params or self.state.params},
+                observations,
+                actions,
+                name="critic",
+                rngs={"dropout": rng} if train else {},
+                train=train,
+            )  # (ensemble_size, batch_size)
+
+        return q
 
     def forward_target_critic(
         self,
@@ -105,6 +125,28 @@ class SACAgent(flax.struct.PyTreeNode):
             train=train,
         )
 
+    def forward_policy_and_sample(
+        self,
+        obs: Data,
+        rng: PRNGKey,
+        *,
+        grad_params: Optional[Params] = None,
+        repeat=None,
+    ):
+        rng, sample_rng = jax.random.split(rng)
+        action_dist = self.forward_policy(obs, rng, grad_params=grad_params)
+        if repeat:
+            new_actions, log_pi = action_dist.sample_and_log_prob(
+                seed=sample_rng, sample_shape=repeat
+            )
+            new_actions = jnp.transpose(
+                new_actions, (1, 0, 2)
+            )  # (batch, repeat, action_dim)
+            log_pi = jnp.transpose(log_pi, (1, 0))  # (batch, repeat)
+        else:
+            new_actions, log_pi = action_dist.sample_and_log_prob(seed=sample_rng)
+        return new_actions, log_pi
+
     def forward_temperature(
         self, *, grad_params: Optional[Params] = None
     ) -> distrax.Distribution:
@@ -133,26 +175,54 @@ class SACAgent(flax.struct.PyTreeNode):
     def _compute_next_actions(self, batch, rng):
         """shared computation between loss functions"""
         batch_size = batch["rewards"].shape[0]
-
-        next_action_distributions = self.forward_policy(
-            batch["next_observations"], rng=rng
+        sample_n_actions = (
+            self.config["n_actions"] if self.config["max_target_backup"] else None
         )
-        (
-            next_actions,
-            next_actions_log_probs,
-        ) = next_action_distributions.sample_and_log_prob(seed=rng)
-        chex.assert_equal_shape([batch["actions"], next_actions])
-        chex.assert_shape(next_actions_log_probs, (batch_size,))
 
+        next_actions, next_actions_log_probs = self.forward_policy_and_sample(
+            batch["next_observations"],
+            rng,
+            repeat=sample_n_actions,
+        )
+
+        if sample_n_actions:
+            chex.assert_shape(next_actions_log_probs, (batch_size, sample_n_actions))
+        else:
+            chex.assert_shape(next_actions_log_probs, (batch_size,))
         return next_actions, next_actions_log_probs
+
+    def _process_target_next_qs(self, target_next_qs, next_actions_log_probs):
+        """classes that inherit this class can add to this function
+        e.g. CQL will add the cql_max_target_backup option
+        """
+        if self.config["backup_entropy"]:
+            temperature = self.forward_temperature()
+            target_next_qs = target_next_qs - temperature * next_actions_log_probs
+
+        if self.config["max_target_backup"]:
+            max_target_indices = jnp.expand_dims(
+                jnp.argmax(target_next_qs, axis=-1), axis=-1
+            )
+            target_next_qs = jnp.take_along_axis(
+                target_next_qs, max_target_indices, axis=-1
+            ).squeeze(-1)
+            next_actions_log_probs = jnp.take_along_axis(
+                next_actions_log_probs, max_target_indices, axis=-1
+            ).squeeze(-1)
+
+        return target_next_qs
 
     def critic_loss_fn(self, batch, params: Params, rng: PRNGKey):
         """classes that inherit this class can change this function"""
         batch_size = batch["rewards"].shape[0]
+        # Extract continuous actions for critic
+        actions = batch["actions"][..., :-1]
+
         rng, next_action_sample_key = jax.random.split(rng)
         next_actions, next_actions_log_probs = self._compute_next_actions(
             batch, next_action_sample_key
         )
+        # (batch_size, ) for sac, (batch_size, cql_n_actions) for cql
 
         # Evaluate next Qs for all ensemble members (cheap because we're only doing the forward pass)
         target_next_qs = self.forward_target_critic(
@@ -174,7 +244,13 @@ class SACAgent(flax.struct.PyTreeNode):
 
         # Minimum Q across (subsampled) ensemble members
         target_next_min_q = target_next_qs.min(axis=0)
-        chex.assert_shape(target_next_min_q, (batch_size,))
+        chex.assert_equal_shape([target_next_min_q, next_actions_log_probs])
+        # (batch_size,) for sac, (batch_size, cql_n_actions) for cql
+
+        target_next_min_q = self._process_target_next_qs(
+            target_next_min_q,
+            next_actions_log_probs,
+        )
 
         target_q = (
             batch["rewards"]
@@ -187,7 +263,7 @@ class SACAgent(flax.struct.PyTreeNode):
             target_q = target_q - temperature * next_actions_log_probs
 
         predicted_qs = self.forward_critic(
-            batch["observations"], batch["actions"], rng=rng, grad_params=params
+            batch["observations"], actions, rng=rng, grad_params=params
         )
 
         chex.assert_shape(
@@ -290,7 +366,10 @@ class SACAgent(flax.struct.PyTreeNode):
             batch = self.config["augmentation_function"](batch, aug_rng)
 
         batch = batch.copy(
-            add_or_replace={"rewards": batch["rewards"] + self.config["reward_bias"]}
+            add_or_replace={
+                "rewards": batch["rewards"] * self.config["reward_scale"]
+                + self.config["reward_bias"]
+            }
         )
 
         # Compute gradients and update params
@@ -366,6 +445,8 @@ class SACAgent(flax.struct.PyTreeNode):
         },
         # Algorithm config
         discount: float = 0.95,
+        n_actions: int = 10,
+        max_target_backup: bool = False,
         soft_target_update_rate: float = 0.005,
         target_entropy: Optional[float] = None,
         entropy_per_dim: bool = False,
@@ -374,6 +455,7 @@ class SACAgent(flax.struct.PyTreeNode):
         critic_subsample_size: Optional[int] = None,
         image_keys: Iterable[str] = None,
         augmentation_function: Optional[callable] = None,
+        reward_scale: float = 1.0,
         reward_bias: float = 0.0,
         **kwargs,
     ):
@@ -396,7 +478,7 @@ class SACAgent(flax.struct.PyTreeNode):
         params = model_def.init(
             init_rng,
             actor=[observations],
-            critic=[observations, actions],
+            critic=[observations, actions[..., :-1]],
             temperature=[],
         )["params"]
 
@@ -424,8 +506,11 @@ class SACAgent(flax.struct.PyTreeNode):
                 target_entropy=target_entropy,
                 backup_entropy=backup_entropy,
                 image_keys=image_keys,
+                reward_scale=reward_scale,
                 reward_bias=reward_bias,
                 augmentation_function=augmentation_function,
+                n_actions=n_actions,
+                max_target_backup=max_target_backup,
                 **kwargs,
             ),
         )
@@ -439,6 +524,7 @@ class SACAgent(flax.struct.PyTreeNode):
         # Model architecture
         encoder_type: str = "resnet-pretrained",
         use_proprio: bool = False,
+        network_type: str = "mlp",
         critic_network_kwargs: dict = {
             "hidden_dims": [256, 256],
         },
@@ -459,6 +545,7 @@ class SACAgent(flax.struct.PyTreeNode):
         """
         Create a new pixel-based agent, with no encoders.
         """
+        assert network_type in ("mlp", "mlp_resnet")
 
         policy_network_kwargs["activate_final"] = True
         critic_network_kwargs["activate_final"] = True
@@ -511,7 +598,8 @@ class SACAgent(flax.struct.PyTreeNode):
         }
 
         # Define networks
-        critic_backbone = partial(MLP, **critic_network_kwargs)
+        network_class = MLPResNet if network_type == "mlp_resnet" else MLP
+        critic_backbone = partial(network_class, **critic_network_kwargs)
         critic_backbone = ensemblize(critic_backbone, critic_ensemble_size)(
             name="critic_ensemble"
         )
@@ -519,10 +607,11 @@ class SACAgent(flax.struct.PyTreeNode):
             Critic, encoder=encoders["critic"], network=critic_backbone
         )(name="critic")
 
+        policy_backbone = partial(network_class, **policy_network_kwargs)
         policy_def = Policy(
             encoder=encoders["actor"],
-            network=MLP(**policy_network_kwargs),
-            action_dim=actions.shape[-1],
+            network=policy_backbone(),
+            action_dim=actions.shape[-1]-1,
             **policy_kwargs,
             name="actor",
         )

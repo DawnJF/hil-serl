@@ -81,146 +81,6 @@ def print_green(x):
     return print("\033[92m {}\033[00m".format(x))
 
 
-##############################################################################
-
-
-def actor(agent, data_store, intvn_data_store, env, sampling_rng):
-    """
-    This is the actor loop, which runs when "--actor" is set to True.
-    """
-    start_step = (
-        int(os.path.basename(natsorted(glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")))[-1])[12:-4]) + 1
-        if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path) and os.path.exists(os.path.join(FLAGS.checkpoint_path, "buffer"))
-        else 0
-    )
-
-    datastore_dict = {
-        "actor_env": data_store,
-        "actor_env_intvn": intvn_data_store,
-    }
-
-    client = TrainerClient(
-        "actor_env",
-        FLAGS.ip,
-        make_trainer_config(),
-        data_stores=datastore_dict,
-        wait_for_server=True,
-        timeout_ms=3000,
-    )
-
-    # Function to update the agent with new params
-    def update_params(params):
-        nonlocal agent
-        agent = agent.replace(state=agent.state.replace(params=params))
-
-    client.recv_network_callback(update_params)
-
-    transitions = []
-    demo_transitions = []
-
-    obs, _ = env.reset()
-    done = False
-
-    # training loop
-    timer = Timer()
-    running_return = 0.0
-    already_intervened = False
-    intervention_count = 0
-    intervention_steps = 0
-
-    pbar = tqdm.tqdm(range(start_step, config.max_steps), dynamic_ncols=True)
-    for step in pbar:
-        timer.tick("total")
-
-        with timer.context("sample_actions"):
-            if step < config.random_steps:
-                actions = env.action_space.sample()
-            else:
-                sampling_rng, key = jax.random.split(sampling_rng)
-                actions = agent.sample_actions(
-                    observations=jax.device_put(obs),
-                    seed=key,
-                    argmax=False,
-                )
-                actions = np.asarray(jax.device_get(actions))
-
-        # Step environment
-        with timer.context("step_env"):
-
-            next_obs, reward, done, truncated, info = env.step(actions)
-            if "left" in info:
-                info.pop("left")
-            if "right" in info:
-                info.pop("right")
-
-            # override the action with the intervention action
-            if "intervene_action" in info:
-                actions = info.pop("intervene_action")
-                intervention_steps += 1
-                if not already_intervened:
-                    intervention_count += 1
-                already_intervened = True
-            else:
-                already_intervened = False
-
-            running_return += reward
-            transition = dict(
-                observations=obs,
-                actions=actions,
-                next_observations=next_obs,
-                rewards=reward,
-                masks=1.0 - done,
-                dones=done,
-            )
-            if "grasp_penalty" in info:
-                transition["grasp_penalty"] = info["grasp_penalty"]
-            data_store.insert(transition)
-            transitions.append(copy.deepcopy(transition))
-            if already_intervened:
-                intvn_data_store.insert(transition)
-                demo_transitions.append(copy.deepcopy(transition))
-
-            obs = next_obs
-            if done or truncated:
-                info["episode"]["intervention_count"] = intervention_count
-                info["episode"]["intervention_steps"] = intervention_steps
-                stats = {"environment": info}  # send stats to the learner to log
-                client.request("send-stats", stats)
-                pbar.set_description(f"last return: {running_return}")
-                running_return = 0.0
-                intervention_count = 0
-                intervention_steps = 0
-                already_intervened = False
-                client.update()
-                obs, _ = env.reset()
-
-        if step > 0 and config.buffer_period > 0 and step % config.buffer_period == 0:
-            # dump to pickle file
-            buffer_path = os.path.join(FLAGS.checkpoint_path, "buffer")
-            demo_buffer_path = os.path.join(FLAGS.checkpoint_path, "demo_buffer")
-            if not os.path.exists(buffer_path):
-                os.makedirs(buffer_path)
-            if not os.path.exists(demo_buffer_path):
-                os.makedirs(demo_buffer_path)
-            with open(os.path.join(buffer_path, f"transitions_{step}.pkl"), "wb") as f:
-                pkl.dump(transitions, f)
-                transitions = []
-            with open(
-                os.path.join(demo_buffer_path, f"transitions_{step}.pkl"), "wb"
-            ) as f:
-                pkl.dump(demo_transitions, f)
-                demo_transitions = []
-
-        timer.tock("total")
-
-        if step % config.log_period == 0:
-            stats = {"timer": timer.get_average_times()}
-            client.request("send-stats", stats)
-
-
-##############################################################################
-
-
 def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     """
     The learner loop, which runs when "--learner" is set to True.
@@ -233,50 +93,17 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     )
     step = start_step
 
-    def stats_callback(type: str, payload: dict) -> dict:
-        """Callback for when server receives stats request."""
-
-        assert type == "send-stats", f"Invalid request type: {type}"
-        if wandb_logger is not None:
-            wandb_logger.log(payload, step=step)
-
-        return {}  # not expecting a response
-
-    # Create server
-    server = TrainerServer(make_trainer_config(), request_callback=stats_callback)
-    server.register_data_store("actor_env", replay_buffer)
-    server.register_data_store("actor_env_intvn", demo_buffer)
-    server.start(threaded=True)
-
-    # Loop to wait until replay_buffer is filled
-    pbar = tqdm.tqdm(
-        total=config.training_starts,
-        initial=len(replay_buffer),
-        desc="Filling up replay buffer",
-        position=0,
-        leave=True,
-    )
-    while len(replay_buffer) < config.training_starts:
-        pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
-        time.sleep(1)
-    pbar.update(len(replay_buffer) - pbar.n)  # Update progress bar
-    pbar.close()
-
-    # send the initial network to the actor
-    server.publish_network(agent.state.params)
-    print_green("sent initial network to actor")
-
     # 50/50 sampling from RLPD, half from demo and half from online experience
-    replay_iterator = replay_buffer.get_iterator(
-        sample_args={
-            "batch_size": config.batch_size // 2,
-            "pack_obs_and_next_obs": True,
-        },
-        device=sharding.replicate(),
-    )
+    # replay_iterator = replay_buffer.get_iterator(
+    #     sample_args={
+    #         "batch_size": config.batch_size // 2,
+    #         "pack_obs_and_next_obs": True,
+    #     },
+    #     device=sharding.replicate(),
+    # )
     demo_iterator = demo_buffer.get_iterator(
         sample_args={
-            "batch_size": config.batch_size // 2,
+            "batch_size": config.batch_size,
             "pack_obs_and_next_obs": True,
         },
         device=sharding.replicate(),
@@ -287,10 +114,14 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
 
     if isinstance(agent, SACAgent):
         train_critic_networks_to_update = frozenset({"critic"})
-        train_networks_to_update = frozenset({"critic", "actor", "temperature"})
+        # train_networks_to_update = frozenset({"critic", "actor", "temperature"})
+        train_networks_to_update = frozenset({"critic", "actor"})
     else:
         train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
-        train_networks_to_update = frozenset({"critic", "grasp_critic", "actor", "temperature"})
+        # train_networks_to_update = frozenset({"critic", "grasp_critic", "actor", "temperature"})
+        train_networks_to_update = frozenset({"critic", "grasp_critic", "actor"})
+        train_actor_networks_to_update = frozenset({"actor"})
+
 
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
@@ -299,9 +130,8 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
         # This makes training on GPU faster by reducing the large batch transfer time from CPU to GPU
         for critic_step in range(config.cta_ratio - 1):
             with timer.context("sample_replay_buffer"):
-                batch = next(replay_iterator)
                 demo_batch = next(demo_iterator)
-                batch = concat_batches(batch, demo_batch, axis=0)
+                batch = demo_batch
 
             with timer.context("train_critics"):
                 agent, critics_info = agent.update(
@@ -310,17 +140,12 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
                 )
 
         with timer.context("train"):
-            batch = next(replay_iterator)
             demo_batch = next(demo_iterator)
-            batch = concat_batches(batch, demo_batch, axis=0)
+            batch = demo_batch
             agent, update_info = agent.update(
                 batch,
                 networks_to_update=train_networks_to_update,
             )
-        # publish the updated network
-        if step > 0 and step % (config.steps_per_update) == 0:
-            agent = jax.block_until_ready(agent)
-            server.publish_network(agent.state.params)
 
         if step % config.log_period == 0 and wandb_logger:
             wandb_logger.log(update_info, step=step)
@@ -350,6 +175,7 @@ def main(_):
 
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     env = config.get_environment(
+        fake_env=True,
         save_video=FLAGS.save_video,
         debug=FLAGS.debug,
     )
@@ -492,21 +318,6 @@ def main(_):
             replay_buffer,
             demo_buffer=demo_buffer,
             wandb_logger=wandb_logger,
-        )
-
-    elif FLAGS.actor:
-        sampling_rng = jax.device_put(sampling_rng, sharding.replicate())
-        data_store = QueuedDataStore(50000)  # the queue size on the actor
-        intvn_data_store = QueuedDataStore(50000)
-
-        # actor loop
-        print_green("starting actor loop")
-        actor(
-            agent,
-            data_store,
-            intvn_data_store,
-            env,
-            sampling_rng,
         )
 
     else:

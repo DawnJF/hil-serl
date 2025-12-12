@@ -32,46 +32,46 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
 
     state: JaxRLTrainState
     config: dict = nonpytree_field()
-    bc_agent: Optional[Any] = nonpytree_field() 
+    # bc_agent: Optional[Any] = nonpytree_field() 
 
-    def forward_critic_eval(
-        self,
-        observations: Data,
-        actions: jax.Array,
-    ) -> jax.Array:
-        """
-        Forward pass for critic network in evaluation mode.
-        """
-        return self.forward_critic(
-            observations, 
-            actions, 
-            rng=None, 
-            grad_params=None, 
-            train=False
-        )
+    # def forward_critic_eval(
+    #     self,
+    #     observations: Data,
+    #     actions: jax.Array,
+    # ) -> jax.Array:
+    #     """
+    #     Forward pass for critic network in evaluation mode.
+    #     """
+    #     return self.forward_critic(
+    #         observations, 
+    #         actions, 
+    #         rng=None, 
+    #         grad_params=None, 
+    #         train=False
+    #     )
 
-    def select_max_q(self, target_next_qs, obs, rng):
-        if self.bc_agent is None:
-            return target_next_qs
+    # def select_max_q(self, target_next_qs, obs, rng):
+    #     if self.bc_agent is None:
+    #         return target_next_qs
 
-        bc_next_actions = self.bc_agent.sample_actions(
-            observations=jax.device_put(obs),
-            seed=rng,
-            argmax=True,
-        )
-        bc_target_next_qs = self.forward_target_critic(
-            obs,
-            bc_next_actions[:, :3],
-            rng=rng,
-        )
-        bc_target_next_min_q = bc_target_next_qs.min(axis=0)
+    #     bc_next_actions = self.bc_agent.sample_actions(
+    #         observations=jax.device_put(obs),
+    #         seed=rng,
+    #         argmax=True,
+    #     )
+    #     bc_target_next_qs = self.forward_target_critic(
+    #         obs,
+    #         bc_next_actions[:, :3],
+    #         rng=rng,
+    #     )
+    #     bc_target_next_min_q = bc_target_next_qs.min(axis=0)
 
-        # select max q between sac and bc
-        select_idcs = bc_target_next_min_q > target_next_qs
-        chex.assert_shape(select_idcs, (target_next_qs.shape,))
-        selected_next_qs = jnp.where(select_idcs, bc_target_next_min_q, target_next_qs)
-        chex.assert_shape(selected_next_qs, (target_next_qs.shape,))
-        return selected_next_qs
+    #     # select max q between sac and bc
+    #     select_idcs = bc_target_next_min_q > target_next_qs
+    #     chex.assert_shape(select_idcs, (target_next_qs.shape,))
+    #     selected_next_qs = jnp.where(select_idcs, bc_target_next_min_q, target_next_qs)
+    #     chex.assert_shape(selected_next_qs, (target_next_qs.shape,))
+    #     return selected_next_qs
 
     def forward_critic(
         self,
@@ -110,7 +110,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         return self.forward_critic(
             observations, actions, rng=rng, grad_params=self.state.target_params
         )
-
+    
     def forward_grasp_critic(
         self,
         observations: Data,
@@ -200,7 +200,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         next_action_distributions = self.forward_policy(
             batch["next_observations"], rng=rng
         )
-
+        
         next_actions, next_actions_log_probs = next_action_distributions.sample_and_log_prob(seed=rng)
         chex.assert_shape(next_actions_log_probs, (batch_size,))
 
@@ -238,9 +238,9 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         # Minimum Q across (subsampled) ensemble members
         target_next_min_q = target_next_qs.min(axis=0)
 
-        target_next_min_q = self.select_max_q(
-            target_next_min_q, batch["next_observations"], rng
-        )
+        # target_next_min_q = self.select_max_q(
+        #     target_next_min_q, batch["next_observations"], rng
+        # )
         chex.assert_shape(target_next_min_q, (batch_size,))
 
         target_q = (
@@ -516,7 +516,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         image_keys: Iterable[str] = None,
         augmentation_function: Optional[callable] = None,
         reward_bias: float = 0.0,
-        bc_agent=None,
+        # bc_agent=None,
         **kwargs,
     ):
         networks = {
@@ -581,7 +581,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
                 augmentation_function=augmentation_function,
                 **kwargs,
             ),
-            bc_agent=bc_agent
+            # bc_agent=bc_agent
         )
 
     @classmethod
@@ -611,7 +611,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         temperature_init: float = 1.0,
         image_keys: Iterable[str] = ("image",),
         augmentation_function: Optional[callable] = None,
-        bc_agent=None,
+        # bc_agent=None,
         **kwargs,
     ):
         """
@@ -710,7 +710,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
             critic_subsample_size=critic_subsample_size,
             image_keys=image_keys,
             augmentation_function=augmentation_function,
-            bc_agent=bc_agent,
+            # bc_agent=bc_agent,
             **kwargs,
         )
 

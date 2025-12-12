@@ -216,7 +216,7 @@ class HumanRewardEnv(gym.Wrapper):
             done = True
             info["succeed"] = reward
         elif self.failure_key:
-            reward = -0.2
+            reward = -1.0
             self.failure_key = False
             done = True
             info["succeed"] = reward

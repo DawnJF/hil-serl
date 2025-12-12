@@ -1,18 +1,28 @@
 # !/usr/bin/env python3
 
+from typing import Optional
+
 import jax
 from jax import nn
+from ml_collections import ConfigDict
 import jax.numpy as jnp
 
 from agentlace.trainer import TrainerConfig
 
 from serl_launcher.common.typing import Batch, PRNGKey
 from serl_launcher.common.wandb import WandBLogger
+from experiments.configs.cql_config import get_config as getCQLConfig
+from experiments.configs.sac_config import get_config as getSACConfig
+from experiments.configs.iql_config import get_config as getIQLConfig
 from serl_launcher.agents.continuous.bc import BCAgent
+from serl_launcher.agents.continuous.calql import CalQLAgent
+from serl_launcher.agents.continuous.cql import CQLAgent
+from serl_launcher.agents.continuous.cql_hybrid_single import CQLAgentHybridSingleArm
 from serl_launcher.agents.continuous.sac import SACAgent
 from serl_launcher.agents.continuous.sac_hybrid_single import SACAgentHybridSingleArm
 from serl_launcher.agents.continuous.sac_hybrid_dual import SACAgentHybridDualArm
 from serl_launcher.vision.data_augmentations import batched_random_crop
+from serl_launcher.agents.continuous.iql import IQLAgent
 
 ##############################################################################
 
@@ -53,6 +63,7 @@ def make_sac_pixel_agent(
     sample_action,
     image_keys=("image",),
     encoder_type="resnet-pretrained",
+    reward_scale=1.0,
     reward_bias=0.0,
     target_entropy=None,
     discount=0.97,
@@ -64,30 +75,83 @@ def make_sac_pixel_agent(
         encoder_type=encoder_type,
         use_proprio=True,
         image_keys=image_keys,
-        policy_kwargs={
-            "tanh_squash_distribution": True,
-            "std_parameterization": "exp",
-            "std_min": 1e-5,
-            "std_max": 5,
-        },
-        critic_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        policy_network_kwargs={
-            "activations": nn.tanh,
-            "use_layer_norm": True,
-            "hidden_dims": [256, 256],
-        },
-        temperature_init=1e-2,
-        discount=discount,
-        backup_entropy=False,
-        critic_ensemble_size=2,
-        critic_subsample_size=None,
-        reward_bias=reward_bias,
-        target_entropy=target_entropy,
-        augmentation_function=make_batch_augmentation_func(image_keys),
+        **getSACConfig(
+            updates={
+                "policy_kwargs": {
+                    "tanh_squash_distribution": True,
+                    "std_parameterization": "exp",
+                    "std_min": 1e-5,
+                    "std_max": 5,
+                },
+                "critic_network_kwargs": {
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                    "hidden_dims": [256, 256, 256, 256],
+                },
+                "policy_network_kwargs": {
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                    "hidden_dims": [256, 256, 256, 256],
+                },
+                "temperature_init": 1e-2,
+                "discount": discount,
+                "reward_bias": reward_bias,
+                "reward_scale": reward_scale,
+                "target_entropy": target_entropy,
+                "augmentation_function": make_batch_augmentation_func(image_keys),
+            },
+        ).to_dict(),
+    )
+    return agent
+
+
+def make_sac_pixel_agent_with_resnet_mlp(
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    encoder_type="resnet-pretrained",
+    reward_scale=1.0,
+    reward_bias=0.0,
+    target_entropy=None,
+    discount=0.97,
+):
+    agent = SACAgent.create_pixels(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        encoder_type=encoder_type,
+        use_proprio=True,
+        image_keys=image_keys,
+        network_type="mlp_resnet",
+        **getSACConfig(
+            updates={
+                "policy_kwargs": {
+                    "tanh_squash_distribution": True,
+                    "std_parameterization": "exp",
+                    "std_min": 1e-5,
+                    "std_max": 5,
+                },
+                "critic_network_kwargs": {
+                    "num_blocks": 2,
+                    "out_dim": 256,
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                },
+                "policy_network_kwargs": {
+                    "num_blocks": 2,
+                    "out_dim": 256,
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                },
+                "temperature_init": 1e-2,
+                "discount": discount,
+                "reward_bias": reward_bias,
+                "reward_scale": reward_scale,
+                "target_entropy": target_entropy,
+                "augmentation_function": make_batch_augmentation_func(image_keys),
+            },
+        ).to_dict(),
     )
     return agent
 
@@ -102,7 +166,7 @@ def make_sac_pixel_agent_hybrid_single_arm(
     target_entropy=None,
     discount=0.97,
     optimizer_configs=None,
-    bc_agent=None,
+    # bc_agent=None,
 ):
     agent = SACAgentHybridSingleArm.create_pixels(
         jax.random.PRNGKey(seed),
@@ -141,7 +205,64 @@ def make_sac_pixel_agent_hybrid_single_arm(
         target_entropy=target_entropy,
         augmentation_function=make_batch_augmentation_func(image_keys),
         optimizer_configs=optimizer_configs,
-        bc_agent=bc_agent,
+        # bc_agent=bc_agent,
+    )
+    return agent
+
+def make_sac_cql_pixel_agent_hybrid_single_arm(
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    encoder_type="resnet-pretrained",
+    reward_scale=1.0,
+    reward_bias=0.0,
+    target_entropy=None,
+    discount=0.97,
+    optimizer_configs=None,
+):
+    agent = CQLAgentHybridSingleArm.create(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        encoder_type=encoder_type,
+        use_proprio=True,
+        image_keys=image_keys,
+        optimizer_configs=optimizer_configs,
+        **getCQLConfig(
+            updates={
+                "policy_kwargs": {
+                    "tanh_squash_distribution": True,
+                    "std_parameterization": "exp",
+                    "std_min": 1e-5,
+                    "std_max": 5,
+                },
+                "critic_network_kwargs": {
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                    "hidden_dims": [256, 256, 256, 256],
+                },
+                "grasp_critic_network_kwargs": {
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                    "hidden_dims": [256, 256, 256, 256],
+                },
+                "policy_network_kwargs": {
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                    "hidden_dims": [256, 256, 256, 256],
+                },
+                "grasp_critic_optimizer_kwargs": {
+                    "learning_rate": 1e-4
+                },
+                "temperature_init": 1e-2,
+                "discount": discount,
+                "reward_bias": reward_bias,
+                "reward_scale": reward_scale,
+                "target_entropy": target_entropy,
+                "augmentation_function": make_batch_augmentation_func(image_keys),
+            },
+        ).to_dict(),
     )
     return agent
 
@@ -196,6 +317,143 @@ def make_sac_pixel_agent_hybrid_dual_arm(
     return agent
 
 
+def make_calql_pixel_agent(
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    encoder_type="resnet-pretrained",
+    reward_scale=1.0,
+    reward_bias=0.0,
+    target_entropy=0.0,
+    discount=0.98,
+    is_calql=True,
+):
+    agentType = CalQLAgent if is_calql else CQLAgent
+    agent = agentType.create(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        encoder_type=encoder_type,
+        use_proprio=True,
+        image_keys=image_keys,
+        **getCQLConfig(
+            updates={
+                "policy_kwargs": {
+                    "tanh_squash_distribution": True,
+                    "std_parameterization": "exp",
+                    "std_min": 1e-5,
+                    "std_max": 5,
+                },
+                "critic_network_kwargs": {
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                    "hidden_dims": [256, 256, 256, 256],
+                },
+                "policy_network_kwargs": {
+                    "activations": nn.tanh,
+                    "use_layer_norm": True,
+                    "hidden_dims": [256, 256, 256, 256],
+                },
+                "temperature_init": 1e-2,
+                "discount": discount,
+                "reward_bias": reward_bias,
+                "reward_scale": reward_scale,
+                "target_entropy": target_entropy,
+                "augmentation_function": make_batch_augmentation_func(image_keys),
+            },
+        ).to_dict(),
+    )
+    return agent
+
+
+def make_calql_pixel_agent_with_resnet_mlp(
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    encoder_type="resnet-pretrained",
+    reward_scale=1.0,
+    reward_bias=0.0,
+    target_entropy=0.0,
+    discount=0.98,
+    is_calql=True,
+):
+    agentType = CalQLAgent if is_calql else CQLAgent
+
+    # Get base config first
+    config = getCQLConfig(
+        updates={
+            "temperature_init": 1e-2,
+            "discount": discount,
+            "reward_bias": reward_bias,
+            "reward_scale": reward_scale,
+            "target_entropy": target_entropy,
+            "augmentation_function": make_batch_augmentation_func(image_keys),
+            # Override the network kwargs in config
+            "critic_network_kwargs": {
+                "num_blocks": 2,
+                "out_dim": 256,
+                "activations": nn.tanh,
+                "use_layer_norm": True,
+            },
+            "policy_network_kwargs": {
+                "num_blocks": 2,
+                "out_dim": 256,
+                "activations": nn.tanh,
+                "use_layer_norm": True,
+            },
+            "policy_kwargs": {
+                "tanh_squash_distribution": True,
+                "std_parameterization": "exp",
+                "std_min": 1e-5,
+                "std_max": 5,
+            },
+        },
+    ).to_dict()
+
+    agent = agentType.create(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        encoder_type=encoder_type,
+        use_proprio=True,
+        image_keys=image_keys,
+        network_type="mlp_resnet",
+        **config,
+    )
+    return agent
+
+def make_iql_pixel_agent(
+    seed,
+    sample_obs,
+    sample_action,
+    image_keys=("image",),
+    encoder_type="resnet-pretrained",
+    reward_scale=1.0,
+    reward_bias=0.0,
+    target_entropy=0.0,
+    discount=0.98,
+):
+    agentType = IQLAgent
+    agent = agentType.create(
+        jax.random.PRNGKey(seed),
+        sample_obs,
+        sample_action,
+        encoder_type=encoder_type,
+        use_proprio=True,
+        image_keys=image_keys,
+        **getIQLConfig(
+            updates={
+                "discount": discount,
+                "reward_bias": reward_bias,
+                "reward_scale": reward_scale,
+            },
+        ).to_dict(),
+    )
+    return agent
+
+
 def linear_schedule(step):
     init_value = 10.0
     end_value = 50.0
@@ -238,7 +496,7 @@ def make_trainer_config(port_number: int = 5588, broadcast_port: int = 5589):
     return TrainerConfig(
         port_number=port_number,
         broadcast_port=broadcast_port,
-        request_types=["send-stats", "request-q"],
+        request_types=["send-stats"],
     )
 
 
@@ -248,6 +506,7 @@ def make_wandb_logger(
     debug: bool = False,
     mode: str = "online",
     output_dir: str = None,
+    variant: Optional[ConfigDict] = {},
 ):
     wandb_config = WandBLogger.get_default_config()
     wandb_config.update(
@@ -259,6 +518,6 @@ def make_wandb_logger(
         }
     )
     wandb_logger = WandBLogger(
-        wandb_config=wandb_config, variant={}, debug=debug, wandb_output_dir=output_dir
+        wandb_config=wandb_config, variant=variant, debug=debug, wandb_output_dir=output_dir
     )
     return wandb_logger

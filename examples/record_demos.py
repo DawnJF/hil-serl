@@ -8,11 +8,20 @@ import datetime
 from absl import app, flags
 import time
 import jax
-
+from typing import Union
 from experiments.mappings import CONFIG_MAPPING
+from serl_launcher.utils.launcher import make_sac_cql_pixel_agent_hybrid_single_arm, make_calql_pixel_agent
+from serl_launcher.agents.continuous.cql_hybrid_single import CQLAgentHybridSingleArm
+from flax.training import checkpoints
+from serl_launcher.agents.continuous.calql import CalQLAgent
+from serl_launcher.agents.continuous.cql import CQLAgent
+import jax.numpy as jnp
+
 
 if not hasattr(jax, "tree_map"):
     jax.tree_map = jax.tree.map
+if not hasattr(jax, "tree_leaves"):
+    jax.tree_leaves = jax.tree.leaves
 
 
 FLAGS = flags.FLAGS
@@ -20,12 +29,55 @@ flags.DEFINE_string(
     "exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder."
 )
 flags.DEFINE_integer("successes_needed", 30, "Number of successful demos to collect.")
+flags.DEFINE_boolean("collect_data_wsrl_way", False, "Collect data by wsrl way")
+flags.DEFINE_integer("seed", 42, "Random seed.")
+flags.DEFINE_string(
+    "pretrained_checkpoint_path",
+    None,
+    "Path to the pre-trained offline RL agent checkpoint.",
+)
 
+
+def make_agent(config, env):
+    if config.setup_mode == 'calql':
+        agent: Union[CalQLAgent, CQLAgent] = make_calql_pixel_agent(
+            seed=FLAGS.seed,
+            sample_obs=env.observation_space.sample(),
+            sample_action=env.action_space.sample(),
+            image_keys=config.image_keys,
+            encoder_type=config.encoder_type,
+            reward_scale=1.0,
+            reward_bias=0.0,  # eventually move this to the env?
+            discount=config.discount,
+            is_calql=True,
+            target_entropy=-4.0
+        )
+    elif config.setup_mode == 'calql-single-arm-learned-gripper':
+        agent: CQLAgentHybridSingleArm = make_sac_cql_pixel_agent_hybrid_single_arm(
+                seed=FLAGS.seed,
+                sample_obs=env.observation_space.sample(),
+                sample_action=env.action_space.sample(),
+                image_keys=config.image_keys,
+                encoder_type=config.encoder_type,
+                reward_scale=1.0,
+                reward_bias=0.0,
+                discount=config.discount,
+            )
+    ckpt = checkpoints.restore_checkpoint(
+        os.path.abspath(FLAGS.pretrained_checkpoint_path),
+        agent.state,
+    )
+    agent = agent.replace(state=ckpt)
+    return agent
 
 def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     config = CONFIG_MAPPING[FLAGS.exp_name]()
     env = config.get_environment(fake_env=False, save_video=False, classifier=True)
+
+    if FLAGS.collect_data_wsrl_way:
+        agent = make_agent(config, env)
+        sampling_rng = jax.random.PRNGKey(FLAGS.seed)
 
     obs, info = env.reset()
     print("Reset done")
@@ -38,8 +90,18 @@ def main(_):
 
     # detect the KeyboardInterrupt
     try:
-        while success_count < success_needed:
-            actions = np.zeros(env.action_space.sample().shape)
+        while success_count < success_needed:            
+            if FLAGS.collect_data_wsrl_way:
+                sampling_rng, key = jax.random.split(sampling_rng)
+                actions = agent.sample_actions(
+                    observations=jax.device_put(obs),
+                    seed=key,
+                    argmax=False,
+                )
+                actions = actions.at[-1].set(0.0) if actions.shape[-1] == 4 else jnp.concatenate([actions, jnp.zeros((1,))], axis=-1)
+            else:
+                actions = np.zeros(env.action_space.sample().shape)
+
             next_obs, rew, done, truncated, info = env.step(actions)
             returns += rew
             if "intervene_action" in info:

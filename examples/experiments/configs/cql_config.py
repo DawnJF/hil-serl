@@ -1,0 +1,34 @@
+import numpy as np
+from experiments.configs import sac_config
+from ml_collections import ConfigDict
+
+
+def get_config(updates=None):
+    config = sac_config.get_config()
+
+    config.cql_n_actions = 1
+    config.cql_action_sample_method = "uniform"
+    config.cql_max_target_backup = False
+    config.cql_importance_sample = False
+    config.cql_autotune_alpha = False
+    config.cql_alpha_lagrange_init = 1.0
+    config.cql_alpha_lagrange_otpimizer_kwargs = ConfigDict(
+        {
+            "learning_rate": 3e-4,
+        }
+    )
+    config.cql_target_action_gap = 1.0
+    config.cql_temp = 1.0
+    config.cql_alpha = 0.01
+    config.cql_clip_diff_min = -np.inf
+    config.cql_clip_diff_max = np.inf
+    config.use_td_loss = True  # set this to False to essentially do BC
+    config.use_cql_loss = False  # set this to False to default to SAC
+
+    # Cal-QL
+    config.use_calql = False
+    config.calql_bound_random_actions = False
+
+    if updates is not None:
+        config.update(ConfigDict(updates).copy_and_resolve_references())
+    return config

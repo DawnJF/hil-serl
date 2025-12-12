@@ -1,9 +1,20 @@
+"""
+zhouzypaul: script to run WSRL
+modified from train_rlpd.py and instead do:
+0. load in pre-trained Q/Pi
+1. no data retention and no 50/50 sampling
+2. warmup
+"""
+
 #!/usr/bin/env python3
 
+import copy
 import glob
+import os
+import pickle as pkl
 import time
-import jax
 
+import jax
 if not hasattr(jax, "tree_map"):
     jax.tree_map = jax.tree.map
 if not hasattr(jax, "tree_leaves"):
@@ -12,46 +23,58 @@ import jax.numpy as jnp
 import numpy as np
 import tqdm
 from absl import app, flags
+from agentlace.data.data_store import QueuedDataStore
+from agentlace.trainer import TrainerClient, TrainerServer
+from experiments.mappings import CONFIG_MAPPING
 from flax.training import checkpoints
-import os
-import copy
-import pickle as pkl
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 from natsort import natsorted
-
 from serl_launcher.agents.continuous.sac import SACAgent
-from serl_launcher.agents.continuous.sac_hybrid_single import SACAgentHybridSingleArm
 from serl_launcher.agents.continuous.sac_hybrid_dual import SACAgentHybridDualArm
-from serl_launcher.utils.timer_utils import Timer
-from serl_launcher.utils.train_utils import concat_batches
-
-from agentlace.trainer import TrainerServer, TrainerClient
-from agentlace.data.data_store import QueuedDataStore
-
+from serl_launcher.agents.continuous.sac_hybrid_single import SACAgentHybridSingleArm
+from serl_launcher.agents.continuous.cql_hybrid_single import CQLAgentHybridSingleArm
+from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
 from serl_launcher.utils.launcher import (
     make_sac_pixel_agent,
-    make_sac_pixel_agent_hybrid_single_arm,
     make_sac_pixel_agent_hybrid_dual_arm,
+    make_sac_pixel_agent_hybrid_single_arm,
+    make_sac_pixel_agent_with_resnet_mlp,
+    make_sac_cql_pixel_agent_hybrid_single_arm,
     make_trainer_config,
     make_wandb_logger,
 )
-from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
-
-from experiments.mappings import CONFIG_MAPPING
+from serl_launcher.utils.timer_utils import Timer
+from serl_launcher.utils.train_utils import concat_batches
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string(
-    "exp_name", "usb_pickup_insertion", "Name of experiment corresponding to folder."
-)
+flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
+flags.DEFINE_string("description", "", "Wandb exp name")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_boolean("learner", False, "Whether this is a learner.")
 flags.DEFINE_boolean("actor", False, "Whether this is an actor.")
 flags.DEFINE_string("ip", "localhost", "IP address of the learner.")
 flags.DEFINE_multi_string("demo_path", None, "Path to the demo data.")
 flags.DEFINE_string("checkpoint_path", None, "Path to save checkpoints.")
+flags.DEFINE_integer("eval_checkpoint_step", 0, "Step to evaluate the checkpoint.")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
 flags.DEFINE_boolean("save_video", False, "Save video.")
+flags.DEFINE_boolean("use_resnet_mlp", False, "Use resnet mlp.")
+
+# env
+flags.DEFINE_float("reward_scale", 1.0, "Reward scale.")
+flags.DEFINE_float("reward_bias", 0.0, "Reward bias. Default to step penalty rewards.")
+
+# WSRL args
+flags.DEFINE_string(
+    "pretrained_checkpoint_path",
+    None,
+    "Path to the pre-trained offline RL agent checkpoint.",
+)
+flags.DEFINE_float(
+    "offline_data_ratio", 0, "Ratio of offline data to sample in a batch. WSRL uses 0."
+)
+flags.DEFINE_integer("warmup_period", 5000, "Number of warmup steps for WSRL.")
 
 flags.DEFINE_boolean(
     "debug", False, "Debug mode."
@@ -63,14 +86,6 @@ flags.DEFINE_string(
     "wandb mode, online or offline, if debug is true, mode is disabled.",
 )
 flags.DEFINE_string("wandb_output_dir", None, "wandb output dir")
-
-# for optimizer config
-flags.DEFINE_float("learning_rate", 3e-4, "learning rate")
-flags.DEFINE_integer("warmup_steps", 0, "warm-up steps")
-flags.DEFINE_integer("cosine_decay_steps", None, "cosing decay steps")
-flags.DEFINE_float("weight_decay", None, "weight decay for adamw")
-flags.DEFINE_float("clip_grad_norm", None, "clip grad norm intensity")
-flags.DEFINE_boolean("return_lr_schedule", False, "if return lr schedule")
 
 devices = jax.local_devices()
 num_devices = len(devices)
@@ -88,8 +103,14 @@ def actor(agent, data_store, intvn_data_store, env, sampling_rng):
     """
     This is the actor loop, which runs when "--actor" is set to True.
     """
+
     start_step = (
-        int(os.path.basename(natsorted(glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")))[-1])[12:-4]) + 1
+        int(
+            os.path.basename(
+                natsorted(glob.glob(os.path.join(FLAGS.checkpoint_path, "buffer/*.pkl")))[-1]
+            )[12:-4]
+        )
+        + 1
         if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path) and os.path.exists(os.path.join(FLAGS.checkpoint_path, "buffer"))
         else 0
     )
@@ -226,7 +247,11 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     The learner loop, which runs when "--learner" is set to True.
     """
     start_step = (
-        int(os.path.basename(checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path)))[11:])
+        int(
+            os.path.basename(
+                checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
+            )[11:]
+        )
         + 1
         if FLAGS.checkpoint_path and os.path.exists(FLAGS.checkpoint_path)
         else 0
@@ -238,8 +263,8 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
 
         assert type == "send-stats", f"Invalid request type: {type}"
         if wandb_logger is not None:
+            payload["actor_steps"] = len(replay_buffer)  # add in the actor steps
             wandb_logger.log(payload, step=step)
-
         return {}  # not expecting a response
 
     # Create server
@@ -285,12 +310,10 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
     # wait till the replay buffer is filled with enough data
     timer = Timer()
 
-    if isinstance(agent, SACAgent):
-        train_critic_networks_to_update = frozenset({"critic"})
-        train_networks_to_update = frozenset({"critic", "actor", "temperature"})
-    else:
-        train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
-        train_networks_to_update = frozenset({"critic", "grasp_critic", "actor", "temperature"})
+    train_critic_networks_to_update = frozenset({"critic", "grasp_critic"})
+    train_networks_to_update = frozenset(
+        {"critic", "grasp_critic", "actor", "temperature"}
+    )
 
     for step in tqdm.tqdm(
         range(start_step, config.max_steps), dynamic_ncols=True, desc="learner"
@@ -326,13 +349,9 @@ def learner(rng, agent, replay_buffer, demo_buffer, wandb_logger=None):
             wandb_logger.log(update_info, step=step)
             wandb_logger.log({"timer": timer.get_average_times()}, step=step)
 
-        if (
-            step > 0
-            and config.checkpoint_period
-            and step % config.checkpoint_period == 0
-        ):
+        if config.checkpoint_period and (step + 1) % config.checkpoint_period == 0:
             checkpoints.save_checkpoint(
-                os.path.abspath(FLAGS.checkpoint_path), agent.state, step=step, keep=100
+                os.path.abspath(FLAGS.checkpoint_path), agent.state, step=step + 1, keep=100
             )
 
 
@@ -351,23 +370,33 @@ def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     env = config.get_environment(
         save_video=FLAGS.save_video,
-        debug=FLAGS.debug,
+        classifier=False,
     )
     env = RecordEpisodeStatistics(env)
 
     rng, sampling_rng = jax.random.split(rng)
-    
-    if config.setup_mode == 'single-arm-fixed-gripper' or config.setup_mode == 'dual-arm-fixed-gripper':   
-        agent: SACAgent = make_sac_pixel_agent(
+
+    if (
+        config.setup_mode == "single-arm-fixed-gripper"
+        or config.setup_mode == "dual-arm-fixed-gripper"
+    ):
+        agenttype = (
+            make_sac_pixel_agent_with_resnet_mlp
+            if FLAGS.use_resnet_mlp
+            else make_sac_pixel_agent
+        )
+        agent: SACAgent = agenttype(
             seed=FLAGS.seed,
             sample_obs=env.observation_space.sample(),
             sample_action=env.action_space.sample(),
             image_keys=config.image_keys,
             encoder_type=config.encoder_type,
             discount=config.discount,
+            reward_scale=FLAGS.reward_scale,
+            reward_bias=FLAGS.reward_bias,
         )
         include_grasp_penalty = False
-    elif config.setup_mode == 'single-arm-learned-gripper':
+    elif config.setup_mode == "single-arm-learned-gripper":
         agent: SACAgentHybridSingleArm = make_sac_pixel_agent_hybrid_single_arm(
             seed=FLAGS.seed,
             sample_obs=env.observation_space.sample(),
@@ -375,14 +404,6 @@ def main(_):
             image_keys=config.image_keys,
             encoder_type=config.encoder_type,
             discount=config.discount,
-            optimizer_configs={
-                "learning_rate": FLAGS.learning_rate,
-                "warmup_steps": FLAGS.warmup_steps,
-                "cosine_decay_steps": FLAGS.cosine_decay_steps,
-                "weight_decay": FLAGS.weight_decay,
-                "clip_grad_norm": FLAGS.clip_grad_norm,
-                "return_lr_schedule": FLAGS.return_lr_schedule
-            }
         )
         include_grasp_penalty = True
     elif config.setup_mode == "dual-arm-learned-gripper":
@@ -395,18 +416,44 @@ def main(_):
             discount=config.discount,
         )
         include_grasp_penalty = True
+    elif config.setup_mode == 'calql-single-arm-learned-gripper':
+        agent: CQLAgentHybridSingleArm = make_sac_cql_pixel_agent_hybrid_single_arm(
+            seed=FLAGS.seed,
+            sample_obs=env.observation_space.sample(),
+            sample_action=env.action_space.sample(),
+            image_keys=config.image_keys,
+            encoder_type=config.encoder_type,
+            reward_scale=FLAGS.reward_scale,
+            reward_bias=FLAGS.reward_bias,
+            discount=config.discount,
+        )
+        include_grasp_penalty = True
     else:
         raise NotImplementedError(f"Unknown setup mode: {config.setup_mode}")
 
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
-    agent = jax.device_put(
-        jax.tree_map(jnp.array, agent), sharding.replicate()
+    agent = jax.device_put(jax.tree_map(jnp.array, agent), sharding.replicate())
+
+    # load from the pre-trained offline RL agent
+    assert FLAGS.pretrained_checkpoint_path is not None
+    ckpt = checkpoints.restore_checkpoint(
+        os.path.abspath(FLAGS.pretrained_checkpoint_path),
+        agent.state,
+    )
+    agent = agent.replace(state=ckpt)
+    print_green(
+        f"Loaded pre-trained checkpoint from {FLAGS.pretrained_checkpoint_path}"
     )
 
-    if FLAGS.checkpoint_path is not None and os.path.exists(FLAGS.checkpoint_path):
+    # resume from a previous run
+    if (
+        FLAGS.checkpoint_path is not None
+        and os.path.exists(FLAGS.checkpoint_path)
+        and glob.glob(os.path.join(FLAGS.checkpoint_path, "checkpoint_*"))
+    ):
         input(
-            f"Checkpoint path {FLAGS.checkpoint_path} already exists. Press Enter to resume training."
+            "Checkpoint path already exists from a previous run. Press Enter to resume training."
         )
         ckpt = checkpoints.restore_checkpoint(
             os.path.abspath(FLAGS.checkpoint_path),
@@ -416,7 +463,7 @@ def main(_):
         ckpt_number = os.path.basename(
             checkpoints.latest_checkpoint(os.path.abspath(FLAGS.checkpoint_path))
         )[11:]
-        print_green(f"Loaded previous checkpoint at step {ckpt_number}.")
+        print_green(f"Loaded previous checkpoint at step {ckpt_number}. Resuming ...")
 
     def create_replay_buffer_and_wandb_logger():
         replay_buffer = MemoryEfficientReplayBufferDataStore(
@@ -439,6 +486,8 @@ def main(_):
     if FLAGS.learner:
         sampling_rng = jax.device_put(sampling_rng, device=sharding.replicate())
         replay_buffer, wandb_logger = create_replay_buffer_and_wandb_logger()
+        print_green(f"Online buffer size: {len(replay_buffer)}")
+        
         demo_buffer = MemoryEfficientReplayBufferDataStore(
             env.observation_space,
             env.action_space,
@@ -446,18 +495,22 @@ def main(_):
             image_keys=config.image_keys,
             include_grasp_penalty=include_grasp_penalty,
         )
-
         assert FLAGS.demo_path is not None
         for path in FLAGS.demo_path:
             with open(path, "rb") as f:
                 transitions = pkl.load(f)
                 for transition in transitions:
-                    if 'infos' in transition and 'grasp_penalty' in transition['infos']:
-                        transition['grasp_penalty'] = transition['infos']['grasp_penalty']
+                    if (
+                        "infos" in transition
+                        and "grasp_penalty" in transition["infos"]
+                    ):
+                        transition["grasp_penalty"] = transition["infos"][
+                            "grasp_penalty"
+                        ]
                     demo_buffer.insert(transition)
         print_green(f"demo buffer size: {len(demo_buffer)}")
-        print_green(f"online buffer size: {len(replay_buffer)}")
 
+        # continue from a previous WSRL run's data
         if FLAGS.checkpoint_path is not None and os.path.exists(
             os.path.join(FLAGS.checkpoint_path, "buffer")
         ):
